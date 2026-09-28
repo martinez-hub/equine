@@ -963,7 +963,8 @@ class EquineProtonet(Equine):
         Load a previously saved EquineProtonet model.
 
         The file is read with ``torch.load(weights_only=True)`` so that a
-        pickle payload in the file cannot run. The embedded TorchScript module
+        pickle payload in the file cannot run, provided torch >= 2.6 (the
+        minimum EQUINE requires) is installed. The embedded TorchScript module
         is still executable code, so only load files you trust.
 
         Parameters

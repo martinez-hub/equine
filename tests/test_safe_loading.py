@@ -8,7 +8,9 @@ that opening an untrusted file cannot run pickle payloads (see issue #168).
 
 import io
 import os
+import re
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,7 +18,8 @@ import torch
 from conftest import BasicEmbeddingModel
 
 import equine as eq
-from equine.utils import prepare_jit_module
+import equine.utils
+from equine.utils import load_checkpoint, prepare_jit_module
 
 
 class _MakesDirectoryWhenUnpickled:
@@ -365,3 +368,63 @@ def test_load_jit_archive_accepts_all_stored_forms() -> None:
     for archive in (jit_archive_to_tensor(buffer), buffer.getvalue(), buffer):
         rebuilt = load_jit_archive(archive)
         assert torch.allclose(rebuilt(x), expected, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# torch.load(weights_only=True) has a known bypass before torch 2.6
+# (CVE-2025-32434); EQUINE must require and enforce that floor.
+# ---------------------------------------------------------------------------
+
+
+def test_declared_torch_floor_is_at_least_2_6() -> None:
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            pytest.skip("tomllib/tomli not available")
+
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with open(pyproject_path, "rb") as f:
+        data = tomllib.load(f)
+
+    dependencies = data["project"]["dependencies"]
+    torch_deps = [dep for dep in dependencies if re.match(r"^torch\b", dep)]
+
+    assert len(torch_deps) == 1, (
+        f"expected exactly one torch dependency, got {torch_deps}"
+    )
+    torch_dep = torch_deps[0]
+    assert ";" not in torch_dep, (
+        f"torch dependency must not be platform-conditional: {torch_dep!r}"
+    )
+
+    match = re.search(r">=\s*(\d+)\.(\d+)", torch_dep)
+    assert match, f"could not find a >= floor in {torch_dep!r}"
+    floor = (int(match.group(1)), int(match.group(2)))
+    assert floor >= (2, 6), f"declared torch floor {floor} is below the required (2, 6)"
+
+
+def test_load_checkpoint_refuses_old_torch(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(equine.utils, "_torch_version", lambda: (2, 5))
+
+    path = tmp_path / "trivial.pt"
+    torch.save({"a": 1}, path)
+
+    with pytest.raises(ValueError, match="CVE-2025-32434"):
+        load_checkpoint(str(path))
+
+    with pytest.warns(UserWarning, match="unsafe"):
+        result = load_checkpoint(str(path), allow_unsafe_legacy_format=True)
+    assert result == {"a": 1}
+
+
+def test_load_checkpoint_accepts_supported_torch(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(equine.utils, "_torch_version", lambda: (2, 6))
+
+    path = tmp_path / "trivial.pt"
+    torch.save({"a": 1}, path)
+
+    result = _load_without_unsafe_warning(lambda: load_checkpoint(str(path)))
+    assert result == {"a": 1}

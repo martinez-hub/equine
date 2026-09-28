@@ -39,12 +39,28 @@ _UNSAFE_LOAD_WARNING = (
 _UNSAFE_LOAD_ERROR = (
     "Could not safely load '{path}'. EQUINE reads model files with "
     "torch.load(weights_only=True), which refuses pickled Python objects that "
-    "could run code when the file is opened. This file either was written by an "
-    "EQUINE version that used the legacy pickle format, or is not an EQUINE model. "
-    "If you created the file yourself and trust it, load it with "
-    "allow_unsafe_legacy_format=True and call save() to rewrite it in the safe "
-    "format."
+    "could run code when the file is opened, on torch >= 2.6. This file either "
+    "was written by an EQUINE version that used the legacy pickle format, or is "
+    "not an EQUINE model. If you created the file yourself and trust it, load it "
+    "with allow_unsafe_legacy_format=True and call save() to rewrite it in the "
+    "safe format."
 )
+
+# torch.load(weights_only=True) has a known unpickling bypass on every torch
+# release before 2.6.0 (CVE-2025-32434 / GHSA-53q9-r3pm-6pq6), so the safe load
+# path below is only trustworthy on torch >= 2.6.
+_MIN_SAFE_TORCH = (2, 6)
+
+_OLD_TORCH_ERROR = (
+    "Restricted unpickling (torch.load(weights_only=True)) has a known bypass "
+    "on torch < 2.6 (CVE-2025-32434); installed torch is {version}. Upgrade "
+    "torch, or pass allow_unsafe_legacy_format=True only for files you trust."
+)
+
+
+def _torch_version() -> tuple[int, int]:
+    """Return the installed torch version as an ``(major, minor)`` tuple."""
+    return tuple(int(p) for p in torch.__version__.split("+")[0].split(".")[:2])
 
 
 def load_checkpoint(
@@ -58,10 +74,11 @@ def load_checkpoint(
 
     The file is read with ``torch.load(weights_only=True)``, which only
     reconstructs tensors and plain Python containers, so a crafted pickle
-    payload cannot run when the file is opened. Files written by EQUINE
-    versions before the safe format (see ``EQUINE_FORMAT_VERSION``) stored
-    Python objects that require unrestricted unpickling; they are rejected
-    unless ``allow_unsafe_legacy_format`` is set, in which case the unrestricted
+    payload cannot run when the file is opened, provided torch >= 2.6 (the
+    minimum EQUINE requires) is installed. Files written by EQUINE versions
+    before the safe format (see ``EQUINE_FORMAT_VERSION``) stored Python
+    objects that require unrestricted unpickling; they are rejected unless
+    ``allow_unsafe_legacy_format`` is set, in which case the unrestricted
     load is used only after the safe load has failed.
 
     Note that the embedded TorchScript module is executable code that is run by
@@ -95,6 +112,16 @@ def load_checkpoint(
         If the file cannot be loaded safely and
         ``allow_unsafe_legacy_format`` is False.
     """
+    if _torch_version() < _MIN_SAFE_TORCH:
+        if not allow_unsafe_legacy_format:
+            raise ValueError(_OLD_TORCH_ERROR.format(version=torch.__version__))
+        warnings.warn(
+            _UNSAFE_LOAD_WARNING.format(path=path),
+            UserWarning,
+            stacklevel=_stacklevel,
+        )
+        return torch.load(path, map_location=map_location, weights_only=False)
+
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
     except pickle.UnpicklingError as err:
