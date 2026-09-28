@@ -82,6 +82,25 @@ Opening a recipe file where the class is unknown
 This model file was saved with embedding architecture 'someone_else.encoder', which is not registered in this process. Registered: equine.mlp, mynotebook.embedding. Import the module that registers it (@equine.embedding_architecture('someone_else.encoder')), or pass the architecture yourself with load(..., embedding_model=YourModule(...)).
 
 ==============================================================================
+Hugging Face Hub layout: save_pretrained / from_pretrained / push_to_hub
+==============================================================================
+
+model.save_pretrained("my-equine-model")   # config.json + model.safetensors + README.md
+model.push_to_hub("org/my-equine-model")   # same files, uploaded (needs a token)
+eq.EquineProtonet.from_pretrained("org/my-equine-model")   # rebuilds via the registry
+
+directory: ['README.md', 'config.json', 'model.safetensors']
+config.json (plain JSON, no tensors):
+  model_type             EquineProtonet
+  library_name           equine
+  embedding_recipe       {'builder': 'equine.mlp', 'kwargs': {'activation': 'relu', 'hidden_sizes': [32], 'in_features': 6, 'out_features': 3}}
+  contains_executable    False
+  settings               {'cov_type': 'unit', 'device': 'cpu', 'emb_out_dim': 3, 'init_temperature': 1.0, 'relative_mahal': True, 'use_temperature': False}
+model.safetensors: 10 tensors, e.g. ["embedding_state_dict", "net.0.bias"], ["support", 2]
+from_pretrained predictions equal: True
+executable (web-app) model -> save_pretrained refused: Cannot save: the embedding model (RecursiveScriptModule) is not a regi ...
+
+==============================================================================
 Summary
 ==============================================================================
 
@@ -90,5 +109,6 @@ registered here: ['equine.mlp', 'mynotebook.embedding']
 - unregistered class: save() refuses unless allow_executable=True; file flagged;
   load needs trust_executable=True (the web app's current path, made explicit)
 - unknown recipe on load: actionable error, or pass embedding_model=YourClass(...)
+- Hub layout: config.json + model.safetensors, scanner-clean, from_pretrained via registry
 - not done in this spike: EquineGP, GP/Protonet symmetry, notebooks, docs
 

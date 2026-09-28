@@ -1,11 +1,13 @@
 # D-191 spike demo: what changes for a user when the embedding model is stored
 # as a recipe instead of a TorchScript archive. Run with the repo installed:
 #     python docs/superpowers/spikes/d191_registry_demo.py
+import json
 import os
 import tempfile
 import textwrap
 
 import torch
+from safetensors import safe_open
 
 import equine as eq
 
@@ -140,6 +142,40 @@ try:
 except ValueError as e:
     print(str(e))
 
+section("Hugging Face Hub layout: save_pretrained / from_pretrained / push_to_hub")
+print(
+    textwrap.dedent("""
+    model.save_pretrained("my-equine-model")   # config.json + model.safetensors + README.md
+    model.push_to_hub("org/my-equine-model")   # same files, uploaded (needs a token)
+    eq.EquineProtonet.from_pretrained("org/my-equine-model")   # rebuilds via the registry
+""")
+)
+hub_dir = os.path.join(tmp, "hub_repo")
+m2.save_pretrained(hub_dir)
+print("directory:", sorted(os.listdir(hub_dir)))
+cfg = json.load(open(os.path.join(hub_dir, "config.json")))
+print("config.json (plain JSON, no tensors):")
+for k in (
+    "model_type",
+    "library_name",
+    "embedding_recipe",
+    "contains_executable",
+    "settings",
+):
+    print(f"  {k:22s} {cfg[k]}")
+with safe_open(os.path.join(hub_dir, "model.safetensors"), framework="pt") as f:
+    keys = list(f.keys())
+print(f"model.safetensors: {len(keys)} tensors, e.g. {keys[0]}, {keys[-1]}")
+back = eq.EquineProtonet.from_pretrained(hub_dir)
+print(
+    "from_pretrained predictions equal:",
+    torch.allclose(m2.predict(X[:8]).classes, back.predict(X[:8]).classes),
+)
+try:
+    m3.save_pretrained(os.path.join(tmp, "nope"))
+except ValueError as e:
+    print("executable (web-app) model -> save_pretrained refused:", str(e)[:70], "...")
+
 section("Summary")
 print(
     textwrap.dedent(f"""
@@ -148,6 +184,6 @@ print(
     - unregistered class: save() refuses unless allow_executable=True; file flagged;
       load needs trust_executable=True (the web app's current path, made explicit)
     - unknown recipe on load: actionable error, or pass embedding_model=YourClass(...)
-    - not done in this spike: EquineGP, GP/Protonet symmetry, notebooks, docs
+    - Hub layout: config.json + model.safetensors, scanner-clean, from_pretrained via registry\n    - not done in this spike: EquineGP, GP/Protonet symmetry, notebooks, docs
 """)
 )

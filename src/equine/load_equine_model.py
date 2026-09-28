@@ -6,6 +6,7 @@ from typing import Optional
 
 import torch
 
+from . import hub as _hub
 from .equine import Equine
 from .equine_gp import EquineGP
 from .equine_protonet import EquineProtonet
@@ -47,9 +48,12 @@ def load_equine_model(
     but the embedded TorchScript module is still executable code. Only load
     files you trust.
     """
-    model_save = load_checkpoint(
-        model_path, allow_unsafe_legacy_format=allow_unsafe_legacy_format
-    )
+    if _hub.is_model_dir(model_path):  # Hub-style directory: config.json + safetensors
+        model_save = _hub.load_checkpoint_dir(model_path)
+    else:
+        model_save = load_checkpoint(
+            model_path, allow_unsafe_legacy_format=allow_unsafe_legacy_format
+        )
     model_type = model_save["train_summary"]["modelType"]
 
     if model_type == "EquineProtonet":

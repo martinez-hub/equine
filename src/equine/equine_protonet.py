@@ -19,6 +19,7 @@ from scipy.stats import gaussian_kde
 from torch.utils.data import TensorDataset
 from tqdm import tqdm
 
+from . import hub as _hub
 from .equine import Equine, EquineOutput
 from .registry import build_from_recipe, embedding_recipe
 from .utils import (
@@ -928,6 +929,33 @@ class EquineProtonet(Equine):
         ValueError
             If the embedding model has no recipe and ``allow_executable`` is False.
         """
+        torch.save(self._to_checkpoint(allow_executable), path)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """
+        Export as a Hugging Face Hub-style directory (``config.json`` +
+        ``model.safetensors``). Requires ``pip install "equine[hub]"`` and a
+        registered embedding architecture.
+        """
+        _hub.save_pretrained(self, save_directory)
+
+    def push_to_hub(self, repo_id: str, **kwargs: Any) -> str:
+        """Export and upload to the Hugging Face Hub; see ``equine.hub.push_to_hub``."""
+        return _hub.push_to_hub(self, repo_id, **kwargs)
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        load_directory: str,
+        device: Optional[str] = None,
+        embedding_model: Optional[torch.nn.Module] = None,
+    ) -> Equine:
+        """Load a model written by ``save_pretrained`` (a directory with ``config.json``)."""
+        model_save = _hub.load_checkpoint_dir(load_directory)
+        return cls._from_checkpoint(model_save, device, embedding_model=embedding_model)
+
+    def _to_checkpoint(self, allow_executable: bool = False) -> dict[str, Any]:
+        """Build the checkpoint dictionary that ``save`` writes and ``_from_checkpoint`` reads."""
         model_settings = {
             "cov_type": self.cov_type.value,
             "emb_out_dim": self.emb_out_dim,
@@ -982,8 +1010,7 @@ class EquineProtonet(Equine):
             "support": {int(label): x for label, x in self.model.support.items()},
             "train_summary": self.train_summary,
         }
-
-        torch.save(save_data, path)  # TODO allow model checkpointing
+        return save_data
 
     @classmethod
     def load(

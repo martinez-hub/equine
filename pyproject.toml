@@ -51,6 +51,11 @@ tests = [
     "codespell"
 ]
 
+hub = [
+    "safetensors >= 0.4",
+    "huggingface_hub >= 0.20",
+]
+
 docs = [
     "mkdocs>=1.3",
     "mkdocs-material",
