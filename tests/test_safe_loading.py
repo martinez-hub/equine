@@ -74,6 +74,26 @@ def _jit_buffer(module: torch.nn.Module) -> io.BytesIO:
     return buffer
 
 
+def _load_without_unsafe_warning(fn):
+    """Run `fn()` and assert EQUINE's unsafe-load warning was not raised.
+
+    Uses record-and-assert rather than `warnings.simplefilter("error")` so
+    that unrelated warnings torch itself may emit on other torch versions
+    (e.g. TypedStorage deprecation on torch 2.0, a `torch.jit.load`
+    FutureWarning on torch 2.14) don't fail the test.
+    """
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        result = fn()
+    unsafe = [
+        w
+        for w in record
+        if issubclass(w.category, UserWarning) and "unsafe" in str(w.message)
+    ]
+    assert not unsafe, "safe load path must not raise EQUINE's unsafe-load warning"
+    return result
+
+
 def _write_legacy_protonet_file(model, path: str) -> None:
     """Reproduce the pre-#168 on-disk layout: BytesIO, Enum and scipy objects."""
     torch.save(
@@ -190,9 +210,7 @@ def test_protonet_save_format_is_weights_only_safe(tmp_path) -> None:
     checkpoint = _assert_weights_only_safe_layout(path)
     assert checkpoint["settings"]["cov_type"] == "diag"
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # the safe path must not warn
-        reloaded = eq.load_equine_model(path)
+    reloaded = _load_without_unsafe_warning(lambda: eq.load_equine_model(path))
 
     assert isinstance(reloaded, eq.EquineProtonet)
     assert reloaded.cov_type is eq.CovType.DIAGONAL
@@ -216,9 +234,7 @@ def test_gp_save_format_is_weights_only_safe(tmp_path) -> None:
 
     _assert_weights_only_safe_layout(path)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        reloaded = eq.load_equine_model(path)
+    reloaded = _load_without_unsafe_warning(lambda: eq.load_equine_model(path))
 
     assert isinstance(reloaded, eq.EquineGP)
     assert list(reloaded.support.keys()) == list(model.support.keys())
@@ -288,9 +304,9 @@ def test_opt_in_still_uses_safe_path_for_safe_files(tmp_path) -> None:
     path = str(tmp_path / "safe.eq")
     model.save(path)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        reloaded = eq.load_equine_model(path, allow_unsafe_legacy_format=True)
+    reloaded = _load_without_unsafe_warning(
+        lambda: eq.load_equine_model(path, allow_unsafe_legacy_format=True)
+    )
     _assert_same_predictions(model, reloaded, X)
 
 
@@ -314,6 +330,26 @@ def test_opt_in_does_not_bypass_safe_path_for_safe_layout_with_payload(
     with pytest.raises(ValueError, match="safely"):
         eq.load_equine_model(str(path))
     assert not marker.exists()
+
+
+def test_jit_archive_tensor_round_trips_bytes_without_numpy() -> None:
+    """`load_jit_archive`'s tensor-to-bytes conversion must exactly recover the
+    original bytes without going through numpy (see issue #168 follow-up):
+    `.numpy()` raises on torch < 2.3 with numpy 2 installed, a combination
+    pyproject allows, and this path has no other reason to depend on numpy.
+    """
+    import random
+
+    from equine.utils import jit_archive_to_tensor
+
+    # 0 is excluded: `torch.frombuffer` itself rejects an empty buffer, which
+    # is a pre-existing limitation of `jit_archive_to_tensor` unrelated to
+    # this conversion and not a size a real TorchScript archive would have.
+    for length in (1, 3, 7, 8, 9, 37, 129):
+        original = bytes(random.randrange(256) for _ in range(length))
+        tensor = jit_archive_to_tensor(io.BytesIO(original))
+        recovered = bytes(tensor.detach().cpu().contiguous().untyped_storage())
+        assert recovered == original
 
 
 def test_load_jit_archive_accepts_all_stored_forms() -> None:

@@ -4,6 +4,7 @@
 
 import io
 import math
+import sys
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -841,7 +842,11 @@ class EquineGP(Equine):
         model_save = load_checkpoint(
             path,
             allow_unsafe_legacy_format=allow_unsafe_legacy_format,
-            _stacklevel=4,  # skip the beartype wrapper around this classmethod
+            # Skip the beartype wrapper around this classmethod. Under
+            # `python -O`, beartype decorators become a no-op (identity)
+            # passthrough, so that wrapper frame doesn't exist and the
+            # stacklevel must be one shorter to still land on the caller.
+            _stacklevel=3 + (0 if sys.flags.optimize else 1),
         )
         return cls._from_checkpoint(model_save)
 

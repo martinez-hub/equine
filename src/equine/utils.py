@@ -129,7 +129,12 @@ def load_jit_archive(
     ``bytes`` and ``io.BytesIO`` forms found in older files.
     """
     if isinstance(archive, torch.Tensor):
-        buffer = io.BytesIO(archive.cpu().numpy().tobytes())
+        # Avoid `.numpy()`: on torch < 2.3 with numpy 2 installed (a
+        # combination pyproject allows), the numpy interop raises, and this
+        # code path otherwise has no reason to depend on numpy at all.
+        buffer = io.BytesIO(
+            bytes(archive.detach().cpu().contiguous().untyped_storage())
+        )
     elif isinstance(archive, (bytes, bytearray)):
         buffer = io.BytesIO(archive)
     else:
