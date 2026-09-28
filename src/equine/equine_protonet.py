@@ -20,6 +20,7 @@ from torch.utils.data import TensorDataset
 from tqdm import tqdm
 
 from .equine import Equine, EquineOutput
+from .registry import build_from_recipe, embedding_recipe
 from .utils import (
     EQUINE_FORMAT_VERSION,
     generate_episode,
@@ -904,18 +905,28 @@ class EquineProtonet(Equine):
         """
         return self.model.prototypes
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, allow_executable: bool = False) -> None:
         """
         Save all model parameters to a file.
+
+        The embedding model is stored as a *recipe* (registered architecture
+        name plus constructor arguments) and a ``state_dict``, so the file holds
+        only data. If the embedding model is not a registered architecture (for
+        example a ``torch.jit.ScriptModule``), pass ``allow_executable=True`` to
+        embed a TorchScript copy instead; such a file is flagged and can only be
+        opened with ``load(..., trust_executable=True)``.
 
         Parameters
         ----------
         path : str
             Filename to write the model.
+        allow_executable : bool, optional
+            Permit embedding executable TorchScript when no recipe is available.
 
-        Returns
-        -------
-        None
+        Raises
+        ------
+        ValueError
+            If the embedding model has no recipe and ``allow_executable`` is False.
         """
         model_settings = {
             "cov_type": self.cov_type.value,
@@ -926,17 +937,40 @@ class EquineProtonet(Equine):
             "device": self.device,
         }
 
-        jit_model = torch.jit.script(prepare_jit_module(self.model.embedding_model))
-        buffer = io.BytesIO()
-        torch.jit.save(jit_model, buffer)
+        embedding = self.model.embedding_model
+        recipe = embedding_recipe(embedding)
+        if recipe is not None:
+            embedding_save: dict[str, Any] = {
+                "embedding_recipe": recipe,
+                "embedding_state_dict": embedding.state_dict(),
+                "contains_executable": False,
+            }
+        elif allow_executable:
+            jit_model = torch.jit.script(prepare_jit_module(embedding))
+            buffer = io.BytesIO()
+            torch.jit.save(jit_model, buffer)
+            # The archive is a uint8 tensor because raw bytes are only accepted
+            # by torch.load(weights_only=True) from torch 2.5 on.
+            embedding_save = {
+                "embed_jit_save": jit_archive_to_tensor(buffer),
+                "contains_executable": True,
+            }
+        else:
+            raise ValueError(
+                f"Cannot save: the embedding model ({type(embedding).__name__}) is not a "
+                "registered architecture, so it has no recipe to store. Register it with "
+                "@equine.embedding_architecture('yourproject.name') and construct it with "
+                "plain-valued arguments, or pass save(path, allow_executable=True) to embed "
+                "a TorchScript copy (executable content; the file will then require "
+                "load(..., trust_executable=True))."
+            )
 
         # Everything stored here must be readable by torch.load(weights_only=True)
         # on every supported torch version: tensors, containers and plain
-        # scalars/strings only (issue #168). The TorchScript archive is a uint8
-        # tensor because raw bytes are only accepted from torch 2.5 on.
+        # scalars/strings only (issue #168).
         save_data = {
             "equine_format_version": EQUINE_FORMAT_VERSION,
-            "embed_jit_save": jit_archive_to_tensor(buffer),
+            **embedding_save,
             "feature_names": self.feature_names,
             "label_names": self.label_names,
             "model_head_save": self.model.model_head.state_dict(),
@@ -957,6 +991,8 @@ class EquineProtonet(Equine):
         path: str,
         device: Optional[str] = None,
         allow_unsafe_legacy_format: bool = False,
+        trust_executable: bool = False,
+        embedding_model: Optional[torch.nn.Module] = None,
     ) -> Equine:
         """
         Load a previously saved EquineProtonet model.
@@ -978,6 +1014,12 @@ class EquineProtonet(Equine):
             uses unrestricted unpickling and can execute code embedded in the
             file, so only enable it for files you trust. Call ``save`` on the
             loaded model to rewrite it in the safe format. Defaults to False.
+        trust_executable : bool, optional
+            Permit running the TorchScript module embedded in a file saved with
+            ``allow_executable=True``. Implied by ``allow_unsafe_legacy_format``.
+        embedding_model : Optional[torch.nn.Module]
+            Use this module as the embedding architecture instead of rebuilding
+            it from the file's recipe (weights from the file are loaded into it).
 
         Returns
         -------
@@ -987,8 +1029,9 @@ class EquineProtonet(Equine):
         Raises
         ------
         ValueError
-            If the file cannot be loaded safely and
-            ``allow_unsafe_legacy_format`` is False.
+            If the file cannot be loaded safely, names an unregistered
+            architecture, or contains executable content without
+            ``trust_executable``.
         """
 
         # map_location so internal tensors map to the correct device
@@ -998,11 +1041,20 @@ class EquineProtonet(Equine):
             allow_unsafe_legacy_format=allow_unsafe_legacy_format,
             _stacklevel=4,  # skip the beartype wrapper around this classmethod
         )
-        return cls._from_checkpoint(model_save, device)
+        return cls._from_checkpoint(
+            model_save,
+            device,
+            trust_executable=trust_executable or allow_unsafe_legacy_format,
+            embedding_model=embedding_model,
+        )
 
     @classmethod
     def _from_checkpoint(
-        cls, model_save: dict[str, Any], device: Optional[str] = None
+        cls,
+        model_save: dict[str, Any],
+        device: Optional[str] = None,
+        trust_executable: bool = False,
+        embedding_model: Optional[torch.nn.Module] = None,
     ) -> Equine:
         """
         Rebuild an EquineProtonet from an already-loaded checkpoint dictionary.
@@ -1023,8 +1075,9 @@ class EquineProtonet(Equine):
             (int(label), x) for label, x in model_save.get("support").items()
         )
 
-        # Explicitly pass map_location for the jit_model as well
-        jit_model = load_jit_archive(model_save.get("embed_jit_save"), device)
+        embedding = cls._rebuild_embedding(
+            model_save, device, trust_executable, embedding_model
+        )
 
         settings = dict(model_save.get("settings"))
         if isinstance(settings.get("cov_type"), str):
@@ -1033,7 +1086,7 @@ class EquineProtonet(Equine):
         if device is not None:
             settings["device"] = device
 
-        eq_model = cls(jit_model, **settings)
+        eq_model = cls(embedding, **settings)
 
         eq_model.model.model_head.load_state_dict(model_save.get("model_head_save"))
         eq_model.eval()
@@ -1048,3 +1101,45 @@ class EquineProtonet(Equine):
         eq_model.train_summary = model_save.get("train_summary")
 
         return eq_model
+
+    @staticmethod
+    def _rebuild_embedding(
+        model_save: dict[str, Any],
+        device: Optional[str],
+        trust_executable: bool,
+        embedding_model: Optional[torch.nn.Module],
+    ) -> torch.nn.Module:
+        """Reconstitute the embedding model from a checkpoint (recipe, override, or TorchScript)."""
+        state_dict = model_save.get("embedding_state_dict")
+        if embedding_model is not None:
+            if state_dict is None and "embed_jit_save" in model_save:
+                # Migration path: take the weights out of a legacy/executable
+                # archive so the next save() can write a data-only file. The
+                # caller already trusted this file to load its archive.
+                if not trust_executable:
+                    raise ValueError(
+                        "Copying weights out of an embedded TorchScript archive runs "
+                        "that archive; pass trust_executable=True (or the legacy opt-in)."
+                    )
+                archived = load_jit_archive(model_save["embed_jit_save"], device)
+                state_dict = archived.state_dict()
+            if state_dict is not None:
+                embedding_model.load_state_dict(state_dict)
+            return embedding_model
+        if "embedding_recipe" in model_save:
+            embedding = build_from_recipe(model_save["embedding_recipe"])
+            embedding.load_state_dict(state_dict)
+            return embedding
+        if "embed_jit_save" in model_save:
+            if not trust_executable:
+                raise ValueError(
+                    "This model file embeds an executable TorchScript module (saved with "
+                    "allow_executable=True or by an older EQUINE version). Opening it runs "
+                    "that code. If you trust the file, load it with trust_executable=True; "
+                    "to avoid executable content, re-save the model with a registered "
+                    "embedding architecture."
+                )
+            return load_jit_archive(model_save["embed_jit_save"], device)
+        raise ValueError(
+            "Model file contains no embedding model (no recipe or archive)."
+        )

@@ -173,8 +173,13 @@ def _assert_weights_only_safe_layout(path: str) -> dict:
     checkpoint = torch.load(path, weights_only=True)  # must not raise
     # `bytes` is only accepted by the weights-only unpickler from torch 2.5 on,
     # so the TorchScript archive has to travel as a uint8 tensor.
-    archive = checkpoint["embed_jit_save"]
-    assert isinstance(archive, torch.Tensor) and archive.dtype == torch.uint8
+    if "embedding_recipe" in checkpoint:  # data-only layout (registered architecture)
+        assert checkpoint["contains_executable"] is False
+        assert isinstance(checkpoint["embedding_recipe"]["builder"], str)
+        assert "embedding_state_dict" in checkpoint
+    else:  # executable layout (TorchScript archive as a uint8 tensor)
+        archive = checkpoint["embed_jit_save"]
+        assert isinstance(archive, torch.Tensor) and archive.dtype == torch.uint8
     assert checkpoint["equine_format_version"] == 2
     return checkpoint
 
@@ -259,10 +264,29 @@ def test_legacy_file_loads_with_opt_in_and_resaves_safely(
     assert unsafe[0].filename == __file__, "warning must point at the caller"
     _assert_same_predictions(model, reloaded, X)
 
+    # A legacy file carries a TorchScript embedding, so re-saving keeps it
+    # executable (flagged, trust required) unless the caller migrates it to a
+    # registered architecture; both paths are exercised.
     safe_path = str(tmp_path / "resaved.eq")
-    reloaded.save(safe_path)
-    _assert_weights_only_safe_layout(safe_path)
-    _assert_same_predictions(model, eq.load_equine_model(safe_path), X)
+    if isinstance(reloaded, eq.EquineProtonet):
+        reloaded.save(safe_path, allow_executable=True)
+        assert torch.load(safe_path, weights_only=True)["contains_executable"] is True
+        _assert_same_predictions(
+            model, eq.load_equine_model(safe_path, trust_executable=True), X
+        )
+        migrated = eq.load_equine_model(
+            legacy_path,
+            allow_unsafe_legacy_format=True,
+            embedding_model=BasicEmbeddingModel(6, 3),
+        )
+        data_only = str(tmp_path / "migrated.eq")
+        migrated.save(data_only)
+        assert torch.load(data_only, weights_only=True)["contains_executable"] is False
+        _assert_same_predictions(model, eq.load_equine_model(data_only), X)
+    else:
+        reloaded.save(safe_path)
+        _assert_weights_only_safe_layout(safe_path)
+        _assert_same_predictions(model, eq.load_equine_model(safe_path), X)
 
 
 @pytest.mark.parametrize("train, write_legacy", LEGACY_CASES)

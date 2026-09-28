@@ -12,6 +12,7 @@ from hypothesis import strategies as st
 import equine as eq
 
 
+@eq.embedding_architecture("equine.tests.basic")
 class BasicEmbeddingModel(torch.nn.Module):
     def __init__(self, tensor_dim: int, num_classes: int) -> None:
         super(BasicEmbeddingModel, self).__init__()

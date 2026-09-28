@@ -1,0 +1,94 @@
+
+==============================================================================
+BEFORE (main today): user code
+==============================================================================
+
+class EmbeddingModel(torch.nn.Module):          # defined in the notebook
+    def __init__(self): ...
+model = eq.EquineProtonet(EmbeddingModel(), emb_out_dim=3)
+model.train_model(dataset, ...)
+model.save("model.eq")        # embeds a TorchScript copy of EmbeddingModel
+eq.load_equine_model("model.eq")   # torch.jit.load runs the embedded code
+
+
+==============================================================================
+AFTER (spike): user code, one decorator added
+==============================================================================
+
+@eq.embedding_architecture("mynotebook.embedding")   # <-- the one change
+class EmbeddingModel(torch.nn.Module):
+    def __init__(self, in_features: int, out_features: int): ...
+
+model = eq.EquineProtonet(EmbeddingModel(6, 3), emb_out_dim=3)
+model.train_model(dataset, ...)
+model.save("model.eq")        # stores {"builder": "mynotebook.embedding",
+                              #         "kwargs": {"in_features": 6, "out_features": 3}}
+                              # plus a state_dict. No executable content.
+eq.load_equine_model("model.eq")   # rebuilds EmbeddingModel(6, 3), loads weights
+
+
+==============================================================================
+AFTER: what the file contains
+==============================================================================
+file: 8,437 bytes | weights_only=True load: OK
+  equine_format_version    2
+  embedding_recipe         {'builder': 'mynotebook.embedding', 'kwargs': {'in_features': 6, 'out_
+  embedding_state_dict     dict of 4 tensors
+  contains_executable      False
+  feature_names            None
+  label_names              None
+  model_head_save          OrderedDict()
+  outlier_kde              {0: {'dataset': tensor([[ 0.1421, -0.3592, -0.1814, -0.3616,  0.0936, 
+  settings                 {'cov_type': 'unit', 'emb_out_dim': 3, 'use_temperature': False, 'init
+  support                  dict of 3 tensors
+  train_summary            {'numTrainExamples': [{'label': 0, 'numExamples': 32}, {'label': 1, 'n
+reloaded embedding type: EmbeddingModel | predictions equal: True
+
+==============================================================================
+Shipped architecture: no class to define at all
+==============================================================================
+
+model = eq.EquineProtonet(eq.MLP(6, [32], 3), emb_out_dim=3)
+# recipe: {"builder": "equine.mlp", "kwargs": {"in_features": 6, "hidden_sizes": [32],
+#                                             "out_features": 3, "activation": "relu"}}
+
+recipe stored: {'builder': 'equine.mlp', 'kwargs': {'in_features': 6, 'hidden_sizes': [32], 'out_features': 3, 'activation': 'relu'}}
+
+==============================================================================
+Web app path today: a TorchScript module as the embedding model
+==============================================================================
+save() without opt-in -> Cannot save: the embedding model (RecursiveScriptModule) is not a registered architecture, so it has no recipe to store. Register it with @equine.embedding_arch ...
+
+save(path, allow_executable=True) -> file written; contents:
+file: 16,466 bytes | weights_only=True load: OK
+  equine_format_version    2
+  embed_jit_save           tensor (10365,) uint8
+  contains_executable      True
+  feature_names            None
+  label_names              None
+  model_head_save          OrderedDict()
+  outlier_kde              {0: {'dataset': tensor([[-0.0852, -0.3006, -0.3192, -0.4210, -0.3437, 
+  settings                 {'cov_type': 'unit', 'emb_out_dim': 3, 'use_temperature': False, 'init
+  support                  dict of 3 tensors
+  train_summary            {'numTrainExamples': [{'label': 0, 'numExamples': 32}, {'label': 1, 'n
+
+load without trust -> This model file embeds an executable TorchScript module (saved with allow_executable=True or by an older EQUINE version). Opening it runs that code. I ...
+load(trust_executable=True) -> OK, type: RecursiveScriptModule
+
+==============================================================================
+Opening a recipe file where the class is unknown
+==============================================================================
+(simulated: recipe names 'someone_else.encoder', not registered here)
+This model file was saved with embedding architecture 'someone_else.encoder', which is not registered in this process. Registered: equine.mlp, mynotebook.embedding. Import the module that registers it (@equine.embedding_architecture('someone_else.encoder')), or pass the architecture yourself with load(..., embedding_model=YourModule(...)).
+
+==============================================================================
+Summary
+==============================================================================
+
+registered here: ['equine.mlp', 'mynotebook.embedding']
+- default file: data only, readable with torch.load(weights_only=True), no trust flag needed
+- unregistered class: save() refuses unless allow_executable=True; file flagged;
+  load needs trust_executable=True (the web app's current path, made explicit)
+- unknown recipe on load: actionable error, or pass embedding_model=YourClass(...)
+- not done in this spike: EquineGP, GP/Protonet symmetry, notebooks, docs
+

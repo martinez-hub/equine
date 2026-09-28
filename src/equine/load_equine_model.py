@@ -2,6 +2,10 @@
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
 
+from typing import Optional
+
+import torch
+
 from .equine import Equine
 from .equine_gp import EquineGP
 from .equine_protonet import EquineProtonet
@@ -9,7 +13,10 @@ from .utils import load_checkpoint
 
 
 def load_equine_model(
-    model_path: str, allow_unsafe_legacy_format: bool = False
+    model_path: str,
+    allow_unsafe_legacy_format: bool = False,
+    trust_executable: bool = False,
+    embedding_model: Optional[torch.nn.Module] = None,
 ) -> Equine:
     """
     Attempt to load an EQUINE model from a file
@@ -46,7 +53,11 @@ def load_equine_model(
     model_type = model_save["train_summary"]["modelType"]
 
     if model_type == "EquineProtonet":
-        model = EquineProtonet._from_checkpoint(model_save)
+        model = EquineProtonet._from_checkpoint(
+            model_save,
+            trust_executable=trust_executable or allow_unsafe_legacy_format,
+            embedding_model=embedding_model,
+        )
     elif model_type == "EquineGP":
         model = EquineGP._from_checkpoint(model_save)
     else:

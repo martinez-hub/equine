@@ -4,10 +4,18 @@
 
 from typing import TYPE_CHECKING
 
+from . import architectures as _architectures  # noqa: F401  registers equine.* builders
+from .architectures import MLP
 from .equine import Equine, EquineOutput
 from .equine_gp import EquineGP
 from .equine_protonet import CovType, EquineProtonet
 from .load_equine_model import load_equine_model
+from .registry import (
+    embedding_architecture,
+    embedding_recipe,
+    register_embedding_architecture,
+    registered_architectures,
+)
 from .utils import (
     brier_score,
     brier_skill_score,
@@ -34,6 +42,11 @@ __all__ = [
     "EquineGP",
     "EquineProtonet",
     "CovType",
+    "MLP",
+    "embedding_architecture",
+    "embedding_recipe",
+    "register_embedding_architecture",
+    "registered_architectures",
     "brier_score",
     "brier_skill_score",
     "expected_calibration_error",
