@@ -210,7 +210,13 @@ def random_dataset(draw):
     seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
     torch.manual_seed(seed)
     num_classes = draw(st.integers(min_value=2, max_value=5))
-    rows_per_class = draw(st.integers(min_value=30, max_value=200 // num_classes))
+    # >= 30 rows per class and 120 <= rows <= 200 for every num_classes in 2..5
+    rows_per_class = draw(
+        st.integers(
+            min_value=max(30, math.ceil(120 / num_classes)),
+            max_value=200 // num_classes,
+        )
+    )
     rows = rows_per_class * num_classes
     cols = draw(st.integers(min_value=1, max_value=64))
     dataset_x = torch.rand(rows, cols)
@@ -238,7 +244,7 @@ def use_basic_embedding_model(random_dataset):
     return dataset, num_classes, X, embedding_model, train_kwargs
 ```
 
-`cols` is capped at 64 (was 1000) so the wider strategy does not slow the suite; nothing under test depends on width beyond the embedding's input layer.
+`cols` is capped at 64 (was 1000) so the wider strategy does not slow the suite; nothing under test depends on width beyond the embedding's input layer. Add `import math` to conftest. `stratified_train_test_split` holds out `round(count * test_size)` rows per class, so with balanced classes each class keeps at least `floor(0.8 * rows_per_class)` training rows; `per_class_train` is therefore a lower bound and `support_size = min(10, per_class_train - 5)` never trips `generate_episode`'s "Not enough support examples" check.
 
 - [ ] **Step 4: Update every consumer.** Grep: `grep -n "random_dataset\|use_basic_embedding_model\|train_model(" tests/test_equine_protonet.py tests/test_equine_gp.py tests/test_equine_integration.py`. Rules:
   - Unpack `dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(random_dataset)` (was four values); where `random_dataset` is unpacked directly as `dataset, num_classes, way = random_dataset`, use `dataset, num_classes, train_kwargs = random_dataset` and `way = train_kwargs["way"]`.
