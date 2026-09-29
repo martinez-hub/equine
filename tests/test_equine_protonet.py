@@ -196,6 +196,8 @@ def test_train_episodes_with_temperature(random_dataset):
     num_deep_features = 32
     embed_model = BasicEmbeddingModel(X.shape[1], num_deep_features)
     model = eq.EquineProtonet(embed_model, num_deep_features, use_temperature=True)
+    before = model.temperature.item()
+    assert before == 1.0, "init_temperature defaults to 1.0"
     train_dict = model.train_model(
         dataset,
         way=way,
@@ -206,8 +208,14 @@ def test_train_episodes_with_temperature(random_dataset):
 
     assert "calib_x" in train_dict
     assert "calib_y" in train_dict
+    after_train = model.temperature.item()
+    assert after_train != before, "train_model(use_temperature=True) must calibrate"
+    assert after_train > 0
 
     model.calibrate_temperature(train_dict["calib_x"], train_dict["calib_y"], 1, 0.01)
+    after_calibration = model.temperature.item()
+    assert after_calibration != after_train, "calibrate_temperature must move it"
+    assert after_calibration > 0
 
     # Test on multiple predictions
     eq_out = model.predict(X)
@@ -248,10 +256,17 @@ def test_equine_protonet_save_load_with_temperature(random_dataset) -> None:
     dataset, num_classes, X, embedding_model = use_basic_embedding_model(random_dataset)
 
     model = eq.EquineProtonet(embedding_model, num_classes, use_temperature=True)
+    before = model.temperature.item()
     model.train_model(dataset, num_episodes=2)
+    calibrated = model.temperature.item()
+    assert calibrated != before, "train_model(use_temperature=True) must calibrate"
+    assert calibrated > 0
 
-    use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="protonet_save_load_with_temperature.eq"
+    )
+    assert new_model.temperature.item() == pytest.approx(calibrated), (
+        "temperature changed on reload"
     )
 
 

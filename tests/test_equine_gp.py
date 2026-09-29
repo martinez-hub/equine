@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 import torchmetrics
 from conftest import (
@@ -44,10 +45,15 @@ def test_equine_gp_train_from_scratch_with_temperature(random_dataset) -> None:
         momentum=0.9,
         weight_decay=0.0001,
     )
+    before = model.temperature.item()
+    assert before == 1.0, "init_temperature defaults to 1.0"
     train_dict = model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
     assert "train_summary" in train_dict
 
     model.calibrate_model(dataset, 1, 0.01)
+    after = model.temperature.item()
+    assert after != before, "calibrate_model must move the temperature"
+    assert after > 0
 
     assert_valid_prediction(model.predict(X[1:10]), 9, num_classes)
 
@@ -133,12 +139,21 @@ def test_equine_gp_save_load_with_temperature(random_dataset) -> None:
         momentum=0.9,
         weight_decay=0.0001,
     )
+    before = model.temperature.item()
     train_dict = model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
     assert "train_summary" in train_dict
 
     model.calibrate_model(dataset, 1, 0.01)
+    calibrated = model.temperature.item()
+    assert calibrated != before, "calibrate_model must move the temperature"
+    assert calibrated > 0
 
-    use_save_load_model_tests(model, X, tmp_filename="gp_save_load_with_temperature.eq")
+    new_model = use_save_load_model_tests(
+        model, X, tmp_filename="gp_save_load_with_temperature.eq"
+    )
+    assert new_model.temperature.item() == pytest.approx(calibrated), (
+        "temperature changed on reload"
+    )
 
 
 @given(random_dataset=random_dataset())
