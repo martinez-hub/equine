@@ -1,7 +1,6 @@
 # Copyright 2024, MASSACHUSETTS INSTITUTE OF TECHNOLOGY
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
-import os
 
 import pytest
 import torch
@@ -242,12 +241,7 @@ def test_equine_protonet_save_load(random_dataset) -> None:
     model = eq.EquineProtonet(embedding_model, num_classes, relative_mahal=False)
     model.train_model(dataset, num_episodes=2)
 
-    _, tmp_filename = use_save_load_model_tests(
-        model, X, tmp_filename="protonet_save_load.eq"
-    )
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
+    use_save_load_model_tests(model, X, tmp_filename="protonet_save_load.eq")
 
 
 @given(random_dataset=random_dataset())
@@ -258,12 +252,9 @@ def test_equine_protonet_save_load_with_temperature(random_dataset) -> None:
     model = eq.EquineProtonet(embedding_model, num_classes, use_temperature=True)
     model.train_model(dataset, num_episodes=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    use_save_load_model_tests(
         model, X, tmp_filename="protonet_save_load_with_temperature.eq"
     )
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
 
 
 @given(random_dataset=random_dataset())
@@ -275,15 +266,12 @@ def test_equine_protonet_save_load_with_feature_and_label_names(random_dataset) 
     model = eq.EquineProtonet(embedding_model, num_classes)
     model.train_model(dataset, num_episodes=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="protonet_save_load_no_feature_and_label_names.eq"
     )
 
     assert new_model.get_feature_names() is None, "feature_names changed on reload"
     assert new_model.get_label_names() is None, "label_names changed on reload"
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
 
     # with feature and label names
     feature_names = generate_random_string_list(X.shape[1])
@@ -297,7 +285,7 @@ def test_equine_protonet_save_load_with_feature_and_label_names(random_dataset) 
     )
     model.train_model(dataset, num_episodes=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="protonet_save_load_with_feature_and_label_names.eq"
     )
 
@@ -305,6 +293,3 @@ def test_equine_protonet_save_load_with_feature_and_label_names(random_dataset) 
         "feature_names changed on reload"
     )
     assert new_model.get_label_names() == label_names, "label_names changed on reload"
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup

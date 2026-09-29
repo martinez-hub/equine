@@ -76,3 +76,12 @@ def test_model_summary(random_dataset) -> None:
     eq_out = model.predict(X)
 
     eq.utils.generate_model_summary(model, eq_out, Y)
+
+
+def test_suite_leaves_no_model_files_in_the_repo_root() -> None:
+    """Regression guard for #224: tests must not write .eq files into the cwd."""
+    import glob
+    import os
+
+    stray = [f for f in glob.glob("*.eq") if os.path.isfile(f)]
+    assert stray == [], f"tests wrote model files into the working directory: {stray}"

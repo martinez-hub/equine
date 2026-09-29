@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import os
+import tempfile
 import zipfile
 from random import choice
 from string import ascii_lowercase, digits
@@ -100,11 +101,17 @@ def use_basic_embedding_model(random_dataset):
 
 
 def use_save_load_model_tests(model, X, tmp_filename: str = "tmp.eq"):
+    """Save, reload through load_equine_model, and assert predictions are unchanged.
+
+    Writes into a temporary directory that is removed on return. Not a pytest
+    fixture on purpose: hypothesis' function_scoped_fixture health check rejects
+    ``tmp_path`` inside ``@given`` tests.
+    """
     old_output = model.predict(X[1:10])
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)
-    model.save(tmp_filename)
-    new_model = eq.load_equine_model(tmp_filename)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, tmp_filename)
+        model.save(path)
+        new_model = eq.load_equine_model(path)
     new_output = new_model.predict(X[1:10])
     assert (
         torch.nn.functional.mse_loss(old_output.classes, new_output.classes) <= 1e-7
@@ -113,8 +120,7 @@ def use_save_load_model_tests(model, X, tmp_filename: str = "tmp.eq"):
         torch.nn.functional.mse_loss(old_output.ood_scores, new_output.ood_scores)
         <= 1e-7
     ), "OOD predictions changed on reload"
-
-    return new_model, tmp_filename
+    return new_model
 
 
 # return a list of random strings

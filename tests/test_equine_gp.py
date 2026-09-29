@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 import torch
 import torchmetrics
@@ -118,12 +116,7 @@ def test_equine_gp_save_load(random_dataset) -> None:
     )
     model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
-        model, X, tmp_filename="gp_save_load.eq"
-    )
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
+    use_save_load_model_tests(model, X, tmp_filename="gp_save_load.eq")
 
 
 @given(random_dataset=random_dataset())
@@ -144,12 +137,7 @@ def test_equine_gp_save_load_with_temperature(random_dataset) -> None:
 
     model.calibrate_model(dataset, 1, 0.01)
 
-    new_model, tmp_filename = use_save_load_model_tests(
-        model, X, tmp_filename="gp_save_load_with_temperature.eq"
-    )
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
+    use_save_load_model_tests(model, X, tmp_filename="gp_save_load_with_temperature.eq")
 
 
 @given(random_dataset=random_dataset())
@@ -167,7 +155,7 @@ def test_equine_gp_save_load_with_vis(random_dataset) -> None:
     )
     model.train_model(dataset, loss_fn, optimizer, num_epochs=2, vis_support=True)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="gp_save_load_with_vis.eq"
     )
 
@@ -180,9 +168,6 @@ def test_equine_gp_save_load_with_vis(random_dataset) -> None:
         torch.nn.functional.mse_loss(model.prototypes, new_model.get_prototypes())
         <= 1e-7
     ), "Prototypes changed on reload"
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
 
 
 @given(random_dataset=random_dataset())
@@ -201,15 +186,12 @@ def test_equine_gp_save_load_with_feature_and_label_names(random_dataset) -> Non
     )
     model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="gp_save_load_no_feature_and_label_names.eq"
     )
 
     assert new_model.get_feature_names() is None, "feature_names changed on reload"
     assert new_model.get_label_names() is None, "label_names changed on reload"
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
 
     feature_names = generate_random_string_list(X.shape[1])
     label_names = generate_random_string_list(num_classes)
@@ -230,7 +212,7 @@ def test_equine_gp_save_load_with_feature_and_label_names(random_dataset) -> Non
     )
     model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
 
-    new_model, tmp_filename = use_save_load_model_tests(
+    new_model = use_save_load_model_tests(
         model, X, tmp_filename="gp_save_load_with_feature_and_label_names.eq"
     )
 
@@ -238,6 +220,3 @@ def test_equine_gp_save_load_with_feature_and_label_names(random_dataset) -> Non
         "feature_names changed on reload"
     )
     assert new_model.get_label_names() == label_names, "label_names changed on reload"
-
-    if os.path.exists(tmp_filename):
-        os.remove(tmp_filename)  # Cleanup
