@@ -17,7 +17,7 @@ import equine as eq
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=10)
 def test_equine_gp_train_from_scratch(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -38,7 +38,7 @@ def test_equine_gp_train_from_scratch(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=10)
 def test_equine_gp_train_from_scratch_with_temperature(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -67,7 +67,7 @@ def test_equine_gp_train_from_scratch_with_temperature(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=10)
 def test_equine_gp_train_from_scratch_with_scheduler(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -93,7 +93,7 @@ def test_equine_gp_train_from_scratch_with_scheduler(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=10)
 def test_equine_gp_train_from_scratch_with_validation(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -123,7 +123,7 @@ def test_equine_gp_train_from_scratch_with_validation(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=2)
 def test_equine_gp_save_load(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -143,7 +143,7 @@ def test_equine_gp_save_load(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=1)
 def test_equine_gp_save_load_with_temperature(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 
@@ -214,7 +214,7 @@ def test_equine_gp_save_load_with_vis(random_dataset) -> None:
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=1)
 def test_equine_gp_save_load_with_feature_and_label_names(random_dataset) -> None:
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 

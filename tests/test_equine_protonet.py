@@ -146,6 +146,8 @@ def test_train_episodes_full_cov(random_dataset):
     model = eq.EquineProtonet(embed_model, num_deep_features, cov_type=eq.CovType.FULL)
     model.cov_reg_type = "epsilon"
     model.model.cov_reg_type = "epsilon"
+    # 10 support rows in 4 deep-feature dims keep the full covariance well
+    # conditioned, so the derived support_size is sufficient here.
     model.train_model(
         dataset,
         num_episodes=num_episodes,
@@ -214,7 +216,7 @@ def test_train_episodes_with_temperature(random_dataset):
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=1)
 def test_predict_fail_before_training(random_dataset):
-    dataset, num_classes, X, embedding_model, train_kwargs = use_basic_embedding_model(
+    dataset, num_classes, X, embedding_model, _ = use_basic_embedding_model(
         random_dataset
     )
 

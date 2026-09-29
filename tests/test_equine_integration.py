@@ -94,7 +94,23 @@ def test_random_dataset_shape_and_training_args(random_dataset) -> None:
     labels, counts = torch.unique(Y, return_counts=True)
     assert len(labels) == num_classes
     assert counts.min() >= 30
-    assert train_kwargs["way"] == min(3, num_classes)
-    per_class_train = int(rows * (1 - train_kwargs["calib_frac"]) // num_classes)
-    assert 1 <= train_kwargs["support_size"] < per_class_train
-    assert train_kwargs["episode_size"] >= train_kwargs["way"]
+
+    # The real property: the derived arguments survive the split and episode
+    # generation that train_model performs on this data.
+    train_x, _, train_y, _ = eq.utils.stratified_train_test_split(
+        X, Y, train_kwargs["calib_frac"]
+    )
+    support, _, episode_y = eq.utils.generate_episode(
+        train_x,
+        train_y,
+        train_kwargs["support_size"],
+        train_kwargs["way"],
+        train_kwargs["episode_size"],
+    )
+    assert len(support) == train_kwargs["way"]
+    assert episode_y.unique().numel() == train_kwargs["way"]
+    full = eq.utils.generate_support(
+        train_x, train_y, train_kwargs["support_size"], torch.unique(train_y).tolist()
+    )
+    assert len(full) == num_classes
+    assert all(len(s) == train_kwargs["support_size"] for s in full.values())

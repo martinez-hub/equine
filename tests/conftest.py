@@ -55,6 +55,18 @@ def _isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(registry, "_REGISTRY", dict(registry._REGISTRY))
 
 
+@pytest.fixture(autouse=True)
+def _restore_torch_rng_state():
+    """Undo the reseeding done by ``random_dataset`` so later tests don't inherit RNG state.
+
+    Runs once per test *function*, not once per Hypothesis example inside a
+    ``@given``-decorated test.
+    """
+    state = torch.get_rng_state()
+    yield
+    torch.set_rng_state(state)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _no_stray_model_files_in_cwd():
     """Regression guard for #224: the test session must not leave ``*.eq`` files in cwd.
@@ -95,9 +107,13 @@ def random_dataset(draw):
 
     Returns ``(dataset, num_classes, train_kwargs)``. ``train_kwargs`` is passed
     to ``EquineProtonet.train_model`` (GP tests take what they need from it):
-    the defaults (way=3, support_size=25, episode_size=100) only fit a 100-row,
-    3-class dataset, and otherwise generate_episode raises. Torch is seeded from
-    a drawn integer so hypothesis can replay and shrink failing examples.
+    the defaults (way=3, support_size=25, episode_size=100) do not fit every
+    shape this strategy draws (2 classes < way=3; 30-row classes keep only 24
+    training rows < support_size=25), so generate_episode would raise. Torch is
+    seeded from a drawn integer so hypothesis can replay and shrink failing
+    examples. This reseeds the process-global torch RNG; tests that run later
+    in the same worker inherit that state unless restored (see
+    ``_restore_torch_rng_state``).
 
     Shape: 2..5 balanced classes, every class has >= 30 rows, 120 <= rows <= 200.
     """
@@ -118,11 +134,13 @@ def random_dataset(draw):
 
     # train_model splits with stratified_train_test_split, which holds out
     # round(count * calib_frac) rows of every class, so each class keeps
-    # r - round(0.2 r) >= floor(0.8 r) training rows. per_class_train is that
-    # lower bound (>= 24 for r >= 30); the extra -5 on support_size keeps every
-    # class with several query rows after the support is taken.
+    # r - round(0.2 r) >= floor(0.8 r) training rows; per_class_train is that
+    # lower bound. At the current shape bounds it is >= 24, so support_size is
+    # always 10 and leaves >= 14 query rows per class; the min() on support_size
+    # only engages if the shape bounds are lowered. The min() on episode_size
+    # does engage for 4-5 classes with 30-33 rows per class.
     calib_frac = 0.2
-    per_class_train = int(rows * (1 - calib_frac) // num_classes)
+    per_class_train = int(rows_per_class * (1 - calib_frac))
     way = min(3, num_classes)
     support_size = min(10, per_class_train - 5)
     episode_size = min(50, way * (per_class_train - support_size))
