@@ -6,6 +6,7 @@ import pytest
 import torch
 from conftest import (
     BasicEmbeddingModel,
+    assert_valid_prediction,
     generate_random_string_list,
     random_dataset,
     use_basic_embedding_model,
@@ -28,7 +29,8 @@ def test_compute_embeddings(data_shape, num_classes):
     queries = torch.rand(data_shape)
     embed_model = BasicEmbeddingModel(data_shape[1], num_classes)
     model = eq.EquineProtonet(embed_model, num_classes)
-    model.model.compute_embeddings(queries)
+    embeddings = model.model.compute_embeddings(queries)
+    assert embeddings.shape == (data_shape[0], num_classes)
 
 
 @st.composite
@@ -75,13 +77,12 @@ def test_train_episodes(random_dataset):
     assert len(model.model.support) == num_classes  # type: ignore
     # Test on multiple predictions
     eq_out = model.predict(X)
-    assert len(eq_out.classes) == len(X)
-    assert len(eq_out.ood_scores) == len(X)
+    assert_valid_prediction(eq_out, len(X), num_classes)
     # Test on single prediction
     pred_out = model(X[0])
     assert len(pred_out) == 1, "Single prediction works"
     eq_out = model.predict(X[0])
-    assert len(eq_out.classes) == 1, "Single prediction works"
+    assert_valid_prediction(eq_out, 1, num_classes)
 
     support = model.get_support()
     assert support is not None and len(support) == num_classes, (
@@ -124,13 +125,12 @@ def test_train_episodes_shared_reg(random_dataset):
     assert len(model.model.support) == num_classes  # type: ignore
     # Test on multiple predictions
     eq_out = model.predict(X)
-    assert len(eq_out.classes) == len(X)
-    assert len(eq_out.ood_scores) == len(X)
+    assert_valid_prediction(eq_out, len(X), num_classes)
     # Test on single prediction
     pred_out = model(X[0])
     assert len(pred_out) == 1, "Single prediction works"
     eq_out = model.predict(X[0])
-    assert len(eq_out.classes) == 1, "Single prediction works"
+    assert_valid_prediction(eq_out, 1, num_classes)
 
     support = model.get_support()
     assert support is not None and len(support) == num_classes, (
@@ -168,13 +168,12 @@ def test_train_episodes_full_cov(random_dataset):
     assert len(model.model.support) == num_classes  # type: ignore
     # Test on multiple predictions
     eq_out = model.predict(X)
-    assert len(eq_out.classes) == len(X)
-    assert len(eq_out.ood_scores) == len(X)
+    assert_valid_prediction(eq_out, len(X), num_classes)
     # Test on single prediction
     pred_out = model(X[0])
     assert len(pred_out) == 1, "Single prediction works"
     eq_out = model.predict(X[0])
-    assert len(eq_out.classes) == 1, "Single prediction works"
+    assert_valid_prediction(eq_out, 1, num_classes)
 
     assert (
         model.model.support is not None and len(model.model.support) == num_classes
@@ -188,7 +187,7 @@ def test_train_episodes_full_cov(random_dataset):
 @given(random_dataset=random_dataset())
 @settings(deadline=None)
 def test_train_episodes_with_temperature(random_dataset):
-    dataset, _, way = random_dataset
+    dataset, num_classes, way = random_dataset
     num_shot = 3
     num_episodes = 10
     episode_size = 512
@@ -212,13 +211,12 @@ def test_train_episodes_with_temperature(random_dataset):
 
     # Test on multiple predictions
     eq_out = model.predict(X)
-    assert len(eq_out.classes) == len(X)
-    assert len(eq_out.ood_scores) == len(X)
+    assert_valid_prediction(eq_out, len(X), num_classes)
     # Test on single prediction
     pred_out = model(X[0])
     assert len(pred_out) == 1, "Single prediction works"
     eq_out = model.predict(X[0])
-    assert len(eq_out.classes) == 1, "Single prediction works"
+    assert_valid_prediction(eq_out, 1, num_classes)
 
 
 @given(random_dataset=random_dataset())

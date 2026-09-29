@@ -100,6 +100,17 @@ def use_basic_embedding_model(random_dataset):
     return dataset, num_classes, X, embedding_model
 
 
+def assert_valid_prediction(out, num_rows: int, num_classes: int) -> None:
+    """Shape and value checks on an EquineOutput from predict()."""
+    assert out.classes.shape == (num_rows, num_classes)
+    assert out.ood_scores.shape == (num_rows,)
+    assert torch.isfinite(out.classes).all()
+    assert torch.isfinite(out.ood_scores).all()
+    assert torch.all(out.classes >= 0) and torch.all(out.classes <= 1)
+    assert torch.allclose(out.classes.sum(dim=1), torch.ones(num_rows), atol=1e-5)
+    assert torch.all(out.ood_scores >= 0) and torch.all(out.ood_scores <= 1)
+
+
 def use_save_load_model_tests(model, X, tmp_filename: str = "tmp.eq"):
     """Save, reload through load_equine_model, and assert predictions are unchanged.
 
