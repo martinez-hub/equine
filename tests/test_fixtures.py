@@ -4,8 +4,9 @@
 """Cross-version compatibility: files saved by an earlier code version keep
 loading and keep producing the same predictions.
 
-tests/fixtures/*_v2.eq were written by the code at the commit that added them
-(format version 2). Do NOT regenerate them when outputs change; a later PR
+tests/fixtures/*_v2*.eq were written by the code at the commit that added them
+(format version 2, float32; golden_data documents how). Do NOT regenerate them
+when outputs change; a later PR
 that cannot keep this test passing has broken compatibility and must gate its
 change behind a persisted setting with a legacy default (roadmap rule 3).
 
@@ -35,14 +36,25 @@ METADATA_ACCESSORS = {
     "label_names": lambda model: model.get_label_names(),
     "temperature": lambda model: float(model.temperature),
     "modelType": lambda model: model.train_summary["modelType"],
+    "cov_type": lambda model: model.cov_type.value,
+    "relative_mahal": lambda model: model.relative_mahal,
+}
+
+# expected.json key -> (fixture file, class). The *_nondefault fixtures carry
+# every non-default persisted setting (names, temperature, and for the
+# Protonet a full covariance and absolute Mahalanobis distance).
+FIXTURE_FILES = {
+    "protonet": ("protonet_v2.eq", eq.EquineProtonet),
+    "gp": ("gp_v2.eq", eq.EquineGP),
+    "protonet_nondefault": ("protonet_v2_nondefault.eq", eq.EquineProtonet),
+    "gp_nondefault": ("gp_v2_nondefault.eq", eq.EquineGP),
 }
 
 
-@pytest.mark.parametrize(
-    "name, cls", [("protonet", eq.EquineProtonet), ("gp", eq.EquineGP)]
-)
-def test_v2_fixture_loads_and_predicts_the_same(name, cls) -> None:
-    path = os.path.join(FIXTURES, f"{name}_v2.eq")
+@pytest.mark.parametrize("name", list(FIXTURE_FILES))
+def test_v2_fixture_loads_and_predicts_the_same(name) -> None:
+    filename, cls = FIXTURE_FILES[name]
+    path = os.path.join(FIXTURES, filename)
     with open(path, "rb") as f:
         assert hashlib.sha256(f.read()).hexdigest() == EXPECTED[name]["sha256"]
     model = eq.load_equine_model(path)

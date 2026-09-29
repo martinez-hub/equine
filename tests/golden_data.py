@@ -6,10 +6,12 @@
 Everything here is seeded so that the same code produces the same numbers on
 CPU across runs, platforms and BLAS backends. The golden literals in
 tests/test_golden.py are produced by these functions inside ``golden_dtype()``.
-The fixture files in tests/fixtures/ were written by the float32 versions of
-these builders at commit 4c2a7c4 and are never regenerated, so the current
-(float64) builders do NOT reproduce them; tests/fixtures/expected.json pins
-their predictions and SHA-256 instead.
+The fixture files in tests/fixtures/ are float32 and never regenerated:
+the default ones were written by the float32 versions of these builders at
+commit 4c2a7c4, so the current (float64) builders do NOT reproduce them; the
+``*_nondefault`` ones by ``fixture_protonet_nondefault`` and
+``fixture_gp_nondefault`` at the commit that added them.
+tests/fixtures/expected.json pins their predictions and SHA-256.
 
 The golden path (``trained_protonet``, ``trained_gp`` and the query batches,
 all used inside ``golden_dtype()``) runs in float64 precisely for
@@ -126,4 +128,73 @@ def trained_gp(seed: int = SEED) -> eq.EquineGP:
             vis_support=True,
             support_size=10,
         )
+    return model
+
+
+# Names for the non-default fixtures (tests/fixtures/*_v2_nondefault.eq).
+FEATURE_NAMES = [f"feature_{i}" for i in range(FEATURES)]
+LABEL_NAMES = ["alpha", "beta", "gamma"]
+
+
+def fixture_protonet_nondefault(seed: int = SEED) -> eq.EquineProtonet:
+    """How tests/fixtures/protonet_v2_nondefault.eq was produced (float32).
+
+    Documents the fixture's provenance only: every non-default persisted
+    setting (full covariance, absolute Mahalanobis, temperature scaling,
+    feature and label names) on top of ``trained_protonet``'s training. Runs
+    in the default dtype, NOT inside ``golden_dtype()``, like the fixture.
+    Must not be re-run to regenerate the file; expected.json pins its SHA-256.
+    """
+    torch.manual_seed(seed)
+    dataset, _, _ = separable_dataset(seed)
+    model = eq.EquineProtonet(
+        BasicEmbeddingModel(FEATURES, CLASSES),
+        CLASSES,
+        cov_type=eq.CovType.FULL,
+        relative_mahal=False,
+        use_temperature=True,
+        feature_names=FEATURE_NAMES,
+        label_names=LABEL_NAMES,
+    )
+    model.train_model(
+        dataset,
+        num_episodes=20,
+        calib_frac=0.2,
+        support_size=10,
+        way=3,
+        episode_size=30,
+    )
+    return model
+
+
+def fixture_gp_nondefault(seed: int = SEED) -> eq.EquineGP:
+    """How tests/fixtures/gp_v2_nondefault.eq was produced (float32).
+
+    Documents the fixture's provenance only: ``trained_gp``'s training with
+    feature and label names, then ``calibrate_model`` so the persisted
+    temperature differs from 1.0 (``EquineGP.__init__`` has no use_temperature
+    since 0.1.6). Runs in the default dtype, NOT inside ``golden_dtype()``,
+    like the fixture. Must not be re-run to regenerate the file; expected.json
+    pins its SHA-256.
+    """
+    torch.manual_seed(seed)
+    dataset, _, _ = separable_dataset(seed)
+    model = eq.EquineGP(
+        BasicEmbeddingModel(FEATURES, CLASSES),
+        CLASSES,
+        CLASSES,
+        num_random_features=16,
+        feature_names=FEATURE_NAMES,
+        label_names=LABEL_NAMES,
+    )
+    model.train_model(
+        dataset,
+        torch.nn.CrossEntropyLoss(),
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=40,
+        batch_size=32,
+        vis_support=True,
+        support_size=10,
+    )
+    model.calibrate_model(dataset, num_calibration_epochs=5)
     return model
