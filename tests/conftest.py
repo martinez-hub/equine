@@ -2,6 +2,7 @@
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
 
+import glob
 import os
 import tempfile
 import zipfile
@@ -53,6 +54,23 @@ def _isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(registry, "_REGISTRY", dict(registry._REGISTRY))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_stray_model_files_in_cwd():
+    """Regression guard for #224: the test session must not leave ``*.eq`` files in cwd.
+
+    Snapshots the ``*.eq`` files in the working directory when the session
+    starts and, at session teardown, fails if any new ones appeared. Under
+    xdist this runs on every worker at that worker's end, so every writer is
+    covered no matter where it was collected.
+    """
+    before = sorted(glob.glob("*.eq"))
+    yield
+    new_files = sorted(set(glob.glob("*.eq")) - set(before))
+    assert new_files == [], (
+        f"tests wrote model files into the working directory: {new_files}"
+    )
+
+
 @eq.embedding_architecture("equine.tests.basic")
 class BasicEmbeddingModel(torch.nn.Module):
     def __init__(self, tensor_dim: int, num_classes: int) -> None:
@@ -100,14 +118,20 @@ def use_basic_embedding_model(random_dataset):
     return dataset, num_classes, X, embedding_model
 
 
-def assert_valid_prediction(out, num_rows: int, num_classes: int) -> None:
-    """Shape and value checks on an EquineOutput from predict()."""
+def assert_valid_prediction(
+    out: eq.EquineOutput, num_rows: int, num_classes: int
+) -> None:
+    """Shape and value checks on an EquineOutput from predict().
+
+    predict() output only; do not use on forward(), which will return logits.
+    """
     assert out.classes.shape == (num_rows, num_classes)
     assert out.ood_scores.shape == (num_rows,)
     assert torch.isfinite(out.classes).all()
     assert torch.isfinite(out.ood_scores).all()
     assert torch.all(out.classes >= 0) and torch.all(out.classes <= 1)
-    assert torch.allclose(out.classes.sum(dim=1), torch.ones(num_rows), atol=1e-5)
+    row_sums = out.classes.sum(dim=1)
+    assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5)
     assert torch.all(out.ood_scores >= 0) and torch.all(out.ood_scores <= 1)
 
 

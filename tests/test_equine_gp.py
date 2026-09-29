@@ -29,7 +29,8 @@ def test_equine_gp_train_from_scratch(random_dataset) -> None:
     )
     _ = model.train_model(dataset, loss_fn, optimizer, num_epochs=2)
 
-    assert_valid_prediction(model.predict(X[1:10]), 9, num_classes)
+    batch = X[1:10]
+    assert_valid_prediction(model.predict(batch), len(batch), num_classes)
 
 
 @given(random_dataset=random_dataset())
@@ -55,7 +56,8 @@ def test_equine_gp_train_from_scratch_with_temperature(random_dataset) -> None:
     assert after != before, "calibrate_model must move the temperature"
     assert after > 0
 
-    assert_valid_prediction(model.predict(X[1:10]), 9, num_classes)
+    batch = X[1:10]
+    assert_valid_prediction(model.predict(batch), len(batch), num_classes)
 
 
 @given(random_dataset=random_dataset())
@@ -78,7 +80,8 @@ def test_equine_gp_train_from_scratch_with_scheduler(random_dataset) -> None:
     assert "train_summary" in train_dict
     assert np.isclose(scheduler.get_last_lr()[0], 0.00001)
 
-    assert_valid_prediction(model.predict(X[1:10]), 9, num_classes)
+    batch = X[1:10]
+    assert_valid_prediction(model.predict(batch), len(batch), num_classes)
 
 
 @given(random_dataset=random_dataset())
@@ -105,7 +108,8 @@ def test_equine_gp_train_from_scratch_with_validation(random_dataset) -> None:
         ],
         num_epochs=2,
     )
-    assert_valid_prediction(model.predict(X[1:10]), 9, num_classes)
+    batch = X[1:10]
+    assert_valid_prediction(model.predict(batch), len(batch), num_classes)
 
 
 @given(random_dataset=random_dataset())
