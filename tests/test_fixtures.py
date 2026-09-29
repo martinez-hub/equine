@@ -8,6 +8,8 @@ tests/fixtures/*_v2.eq were written by the code at the commit that added them
 (format version 2). Do NOT regenerate them when outputs change; a later PR
 that cannot keep this test passing has broken compatibility and must gate its
 change behind a persisted setting with a legacy default (roadmap rule 3).
+
+Load-then-predict is verified exact (atol 1e-6) across macOS arm64 and Linux x86_64.
 """
 
 import json

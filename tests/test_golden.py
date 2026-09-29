@@ -1,11 +1,15 @@
 # Copyright 2024, MASSACHUSETTS INSTITUTE OF TECHNOLOGY
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
-"""Golden-value tests: seeded models must keep producing these exact numbers.
+"""Golden-value tests: seeded models must keep producing these numbers.
 
-A PR that changes model output must update the literals here AND explain the
-change in its description. Phase 3 PRs are expected to do so; any other PR
-that moves them has changed behaviour it did not mean to change.
+The literals pin model behaviour to within GOLDEN_ATOL (1e-3), which is the
+tolerance that holds across platforms: the same seeded training run is
+deterministic on one machine but drifts by up to ~5e-4 between CPU BLAS
+backends (macOS arm64 vs Linux x86_64). A change larger than that is a
+behaviour change: the PR must update the literals here AND explain the change
+in its description. Phase 3 PRs are expected to do so; any other PR that moves
+them has changed behaviour it did not mean to change.
 """
 
 import pytest
@@ -32,6 +36,13 @@ GP_CLASSES = [
 ]
 GP_OOD = [0.73808295, 0.5272457, 0.60310042]
 
+# Training is deterministic on one machine but differs across CPU BLAS backends:
+# summation order accumulates over 20 episodes / 40 epochs of training. Measured
+# drift, macOS arm64 vs Linux x86_64 (torch 2.9.1): Protonet OOD 5.0e-4,
+# GP classes 5.0e-5, GP OOD 1.1e-4. The fixture test in test_fixtures.py keeps
+# atol 1e-6 because load-then-predict is exact across platforms.
+GOLDEN_ATOL = 1e-3
+
 
 @pytest.mark.parametrize(
     "make, expected_classes, expected_ood",
@@ -42,8 +53,10 @@ GP_OOD = [0.73808295, 0.5272457, 0.60310042]
 )
 def test_predictions_match_golden_values(make, expected_classes, expected_ood) -> None:
     out = make().predict(query_batch())
-    assert torch.allclose(out.classes, torch.tensor(expected_classes), atol=1e-6)
-    assert torch.allclose(out.ood_scores, torch.tensor(expected_ood), atol=1e-6)
+    # class identity is platform-stable: one query per class, in class order
+    assert out.classes.argmax(dim=1).tolist() == [0, 1, 2]
+    assert torch.allclose(out.classes, torch.tensor(expected_classes), atol=GOLDEN_ATOL)
+    assert torch.allclose(out.ood_scores, torch.tensor(expected_ood), atol=GOLDEN_ATOL)
 
 
 @pytest.mark.parametrize("make", [trained_protonet, trained_gp], ids=["protonet", "gp"])
