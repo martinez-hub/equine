@@ -392,7 +392,7 @@ PROTONET_CLASSES = [[...], [...], [...]]  # paste from the generator
 PROTONET_OOD = [...]
 GP_CLASSES = [[...], [...], [...]]
 GP_OOD = [...]
-GOLDEN_ATOL = 1e-3
+GOLDEN_ATOL = 1e-6  # see comment in the test; golden path runs in float64
 
 
 @pytest.mark.parametrize(
@@ -404,9 +404,10 @@ GOLDEN_ATOL = 1e-3
 )
 def test_predictions_match_golden_values(make, expected_classes, expected_ood) -> None:
     out = make().predict(query_batch())
-    # GOLDEN_ATOL = 1e-3: training is deterministic per machine but drifts across CPU BLAS
-    # backends (measured macOS arm64 vs Linux x86_64: Protonet OOD 5.0e-4, GP classes 5.0e-5).
-    # Load-then-predict (test_fixtures.py) is exact across platforms and keeps atol 1e-6.
+    # Golden models are built and queried in float64 (golden_data.golden_dtype()): in float32,
+    # training drifts across CPU BLAS backends (macOS arm64 vs Linux x86_64: Protonet OOD 5.0e-4,
+    # GP classes 5.0e-5); in float64 the cross-platform deviation is ~1e-16, so GOLDEN_ATOL = 1e-6
+    # holds. Fixtures stay float32; load-then-predict agrees within 1e-5 across platforms.
     assert out.classes.argmax(dim=1).tolist() == [0, 1, 2]
     assert torch.allclose(out.classes, torch.tensor(expected_classes), atol=GOLDEN_ATOL)
     assert torch.allclose(out.ood_scores, torch.tensor(expected_ood), atol=GOLDEN_ATOL)
@@ -445,7 +446,7 @@ git commit -m "test: seeded golden values and OOD ordering for both models (#187
 
 ### Task 6: cross-version fixture files
 
-**Files:** Create `tests/fixtures/protonet_v2.eq`, `tests/fixtures/gp_v2.eq`, `tests/fixtures/expected.json`, `tests/test_fixtures.py`; modify `.gitattributes` (create if missing) to mark `*.eq binary`.
+**Files:** Create `tests/fixtures/protonet_v2.eq`, `tests/fixtures/gp_v2.eq`, `tests/fixtures/expected.json` (predictions plus the SHA-256 of each `.eq`, asserted before loading so a regenerated file cannot pass silently), `tests/test_fixtures.py`; modify `.gitattributes` (create if missing) to mark `*.eq binary`.
 
 - [ ] **Step 1: Generate the fixtures with the CURRENT code:**
 
@@ -504,8 +505,9 @@ def test_v2_fixture_loads_and_predicts_the_same(name, cls) -> None:
     model = eq.load_equine_model(path)
     assert isinstance(model, cls)
     out = model.predict(query_batch())
-    assert torch.allclose(out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-6)
-    assert torch.allclose(out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-6)
+    # 1e-5: the GP load path recomputes the covariance (cholesky); measured x86 drift 4.8e-7.
+    assert torch.allclose(out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-5)
+    assert torch.allclose(out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-5)
 ```
 
 - [ ] **Step 3: Run; commit (fixtures included)**
