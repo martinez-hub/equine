@@ -2,6 +2,8 @@
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
 
+from collections import OrderedDict
+
 import pytest
 import torch
 from conftest import (
@@ -31,6 +33,15 @@ def test_compute_embeddings(data_shape, num_classes):
     model = eq.EquineProtonet(embed_model, num_classes)
     embeddings = model.model.compute_embeddings(queries)
     assert embeddings.shape == (data_shape[0], num_classes)
+
+
+def test_compute_shared_covariance_refuses_unit_covariance() -> None:
+    # regularize_covariance never asks for a shared UNIT covariance (it warns and
+    # falls back to epsilon regularization), so the refusal is exercised directly.
+    model = eq.EquineProtonet(BasicEmbeddingModel(2, 3), 3)
+    class_cov_dict = OrderedDict({0: torch.ones(3), 1: torch.ones(3)})
+    with pytest.raises(ValueError, match="not UNIT"):
+        model.model.compute_shared_covariance(class_cov_dict, eq.CovType.UNIT)
 
 
 @st.composite
