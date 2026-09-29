@@ -3,6 +3,10 @@ site_author: Allan Wollaber, Steven Jorgensen, John Holodnak, Jensen Dempsey, an
 copyright: "Copyright (c) 2024 Massachusetts Institute of Technology, MIT Licensed" 
 watch: [docs, src]
 repo_url: https://github.com/mit-ll-responsible-ai/equine
+# Planning documents (specs, implementation plans) live beside the docs but are
+# not part of the published site.
+exclude_docs: |
+  superpowers/
 
 nav:
 - Home:
