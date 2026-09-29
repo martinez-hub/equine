@@ -725,17 +725,19 @@ Branch: `git checkout -b stack1/pr-1e-ci-tooling` from PR-1d's tip.
 
 - [ ] **Step 1: tox `[testenv]`:** add `extras = tests` and reduce `deps` to what the extra lacks: `pytest-xdist`, `tzdata`. Remove `pytest`, `pytest-cov`, `hypothesis`, `numpy`, `torch` from `deps` (they come from the package's dependencies and the `tests` extra; the hypothesis pin in `pyproject.toml` is now what CI runs). `[testenv:coverage]`: `extras = tests`, `deps = {[testenv]deps}` plus `coverage[toml]`; drop its duplicated numpy/torch lines. `[testenv:pyright]`: replace the stale `numpy<2.0.0 ; darwin`/`numpy`/`torch>=2.0.0` deps with just `pyright` (the package's own dependencies install torch >= 2.6), and change the description to say it scans `src/` (`tests/` is not scanned; PR-5c decides whether to add it). Pin ruff in `[testenv:format]` and `[testenv:enforce-format]` to the same version the pre-commit hook uses (next step).
 
-- [ ] **Step 2: `.pre-commit-config.yaml`:** set the `ruff-pre-commit` `rev` to the current ruff release (check `uvx ruff --version`; use the matching `v<version>` tag) and pin tox's `ruff==<version>` to match; add the codespell hook:
+- [ ] **Step 2: `.pre-commit-config.yaml`:** set the `ruff-pre-commit` `rev` to the current ruff release (0.16.9 on 2026-09-29; check `uvx ruff --version` and that the mirror has the tag: `git ls-remote --tags https://github.com/astral-sh/ruff-pre-commit`) and pin tox's `ruff==<version>` to match; add the codespell hook:
 
 ```yaml
 -   repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
     -   id: codespell
         args: [src/, docs/]
+        pass_filenames: false
+        additional_dependencies: [tomli]
 ```
 
-(Use the latest codespell tag; `uvx codespell --version` shows the current release.)
+(Use the latest codespell tag. `pass_filenames: false` makes the hook check the same paths tox does regardless of what is staged. `tomli` is required for codespell to read `[tool.codespell]` from `pyproject.toml` on Python < 3.11; without it the hook reports the ~20 `docs/` hits that the config skips, diverging from tox.) Also add `files: ^(src|tests)/` to both ruff hooks: ruff 0.16 formats fenced code in Markdown and notebooks by default, and tox only checks `src/` and `tests/`. Add `extras =` (empty) to `[testenv:pyright]` so it does not inherit the `tests` extra from `[testenv]`.
 
 - [ ] **Step 3: Verify tox still resolves** (tox is not installed in the venv; use uvx): `uvx --with tox-uv tox -e enforce-format` and `uvx --with tox-uv tox -e py312 -- -q -n 2` (this creates `.tox/`; add `.tox/` to `.gitignore` if not already ignored). Expected: both pass. If tox cannot run in this environment, say so in the report and verify the config with `uvx --with tox-uv tox config -e py312 | grep -E "extras|deps"`.
 
