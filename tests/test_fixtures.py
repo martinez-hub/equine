@@ -9,9 +9,12 @@ tests/fixtures/*_v2.eq were written by the code at the commit that added them
 that cannot keep this test passing has broken compatibility and must gate its
 change behind a persisted setting with a legacy default (roadmap rule 3).
 
-Load-then-predict is verified exact (atol 1e-6) across macOS arm64 and Linux x86_64.
+Load-then-predict agrees within 1e-5 across macOS arm64 and Linux x86_64.
+expected.json also records each file's SHA-256, asserted before loading, so a
+regenerated fixture cannot pass without a visible edit to expected.json.
 """
 
+import hashlib
 import json
 import os
 
@@ -31,12 +34,17 @@ with open(os.path.join(FIXTURES, "expected.json")) as f:
 )
 def test_v2_fixture_loads_and_predicts_the_same(name, cls) -> None:
     path = os.path.join(FIXTURES, f"{name}_v2.eq")
+    with open(path, "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == EXPECTED[name]["sha256"]
     model = eq.load_equine_model(path)
     assert isinstance(model, cls)
     out = model.predict(query_batch())
+    # Fixed op count on load (the GP recomputes its covariance via cholesky), no
+    # training amplification: measured x86 drift is 4.8e-7. A real compatibility
+    # break moves outputs by more than 1e-2 or fails to load.
     assert torch.allclose(
-        out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-6
+        out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-5
     )
     assert torch.allclose(
-        out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-6
+        out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-5
     )

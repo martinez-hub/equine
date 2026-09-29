@@ -313,9 +313,9 @@ def test_generate_model_metrics_known_confusion_matrix() -> None:
     metrics = eq.utils.generate_model_metrics(out, y_true)
     # MulticlassAccuracy(num_classes=3) defaults to average="macro": the mean of
     # the per-class recalls. class 0 -> 3/4, class 1 -> 1/1, class 2 -> 0/1,
-    # so (0.75 + 1 + 0) / 3 = 0.58333. With the arguments swapped the "classes"
-    # are the predicted labels and the value comes out as 0.4444.
-    assert metrics["accuracy"] == pytest.approx(0.58333, abs=1e-4)
+    # so (0.75 + 1 + 0) / 3 = 7/12. With the arguments swapped the "classes"
+    # are the predicted labels and the value comes out as 4/9.
+    assert metrics["accuracy"] == pytest.approx(7 / 12)
     # rows = true class, columns = predicted class. The swapped call returns the
     # transpose, [[3, 0, 0], [1, 1, 1], [0, 0, 0]].
     assert metrics["confusionMatrix"] == [[3, 1, 0], [0, 1, 0], [0, 1, 0]]
