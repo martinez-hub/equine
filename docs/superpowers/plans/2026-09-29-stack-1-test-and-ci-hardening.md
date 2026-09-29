@@ -288,9 +288,12 @@ Branch: `git checkout -b stack1/pr-1c-golden-fixtures` from PR-1b's tip.
 """Deterministic data and models for golden-value and cross-version tests.
 
 Everything here is seeded so that the same code produces the same numbers on
-CPU across runs. Golden literals in tests/test_golden.py and the fixture files
-in tests/fixtures/ are produced by these functions.
+CPU across runs. Golden literals in tests/test_golden.py are produced by these
+functions inside golden_dtype() (float64). The fixture files in tests/fixtures/
+are float32 and predate golden_dtype(); they are never regenerated.
 """
+
+import contextlib
 
 import torch
 
@@ -300,6 +303,17 @@ import equine as eq
 
 ROWS, FEATURES, CLASSES = 120, 6, 3
 SEED = 0
+
+
+@contextlib.contextmanager
+def golden_dtype():
+    """Run the golden path in float64: cross-platform deviation ~1e-16 instead of up to 5e-4."""
+    previous = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float64)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(previous)
 
 
 def separable_dataset(seed: int = SEED):
@@ -326,30 +340,34 @@ def far_ood_batch() -> torch.Tensor:
 
 
 def trained_protonet(seed: int = SEED):
-    torch.manual_seed(seed)
-    dataset, _, _ = separable_dataset(seed)
-    model = eq.EquineProtonet(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES)
-    model.train_model(
-        dataset, num_episodes=20, calib_frac=0.2, support_size=10, way=3, episode_size=30
-    )
+    with golden_dtype():
+        torch.manual_seed(seed)
+        dataset, _, _ = separable_dataset(seed)
+        model = eq.EquineProtonet(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES)
+        model.train_model(
+            dataset, num_episodes=20, calib_frac=0.2, support_size=10, way=3, episode_size=30
+        )
     return model
 
 
 def trained_gp(seed: int = SEED):
-    torch.manual_seed(seed)
-    dataset, _, _ = separable_dataset(seed)
-    model = eq.EquineGP(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16)
-    model.train_model(
-        dataset,
-        torch.nn.CrossEntropyLoss(),
-        torch.optim.SGD(model.parameters(), lr=0.05),
-        num_epochs=40,  # 5 epochs at lr 0.01 left the GP undertrained (class probs ~1/3)
-        batch_size=32,
-        vis_support=True,
-        support_size=10,
-    )
+    with golden_dtype():
+        torch.manual_seed(seed)
+        dataset, _, _ = separable_dataset(seed)
+        model = eq.EquineGP(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16)
+        model.train_model(
+            dataset,
+            torch.nn.CrossEntropyLoss(),
+            torch.optim.SGD(model.parameters(), lr=0.05),
+            num_epochs=40,  # 5 epochs at lr 0.01 left the GP undertrained (class probs ~1/3)
+            batch_size=32,
+            vis_support=True,
+            support_size=10,
+        )
     return model
 ```
+
+The builders run inside `golden_dtype()` (float64). The committed fixtures in `tests/fixtures/` are float32 and predate it: they were written before the builders switched dtype and are never regenerated.
 
 - [ ] **Step 2: Generate the literals once.** Run (from the worktree):
 
@@ -357,10 +375,11 @@ def trained_gp(seed: int = SEED):
 .venv/bin/python - <<'EOF'
 import sys; sys.path.insert(0, "tests")
 import torch, json
-from golden_data import trained_protonet, trained_gp, query_batch
+from golden_data import golden_dtype, trained_protonet, trained_gp, query_batch
 torch.set_printoptions(precision=8)
 for name, make in (("protonet", trained_protonet), ("gp", trained_gp)):
-    a = make().predict(query_batch()); b = make().predict(query_batch())
+    with golden_dtype():
+        a = make().predict(query_batch()); b = make().predict(query_batch())
     assert torch.equal(a.classes, b.classes) and torch.equal(a.ood_scores, b.ood_scores), f"{name} not deterministic"
     print(name, "classes", a.classes.tolist()); print(name, "ood", a.ood_scores.tolist())
 EOF
@@ -384,7 +403,7 @@ that moves them has changed behaviour it did not mean to change.
 import pytest
 import torch
 
-from golden_data import far_ood_batch, query_batch, trained_gp, trained_protonet
+from golden_data import far_ood_batch, golden_dtype, query_batch, trained_gp, trained_protonet
 
 import equine as eq
 
@@ -403,7 +422,8 @@ GOLDEN_ATOL = 1e-6  # see comment in the test; golden path runs in float64
     ],
 )
 def test_predictions_match_golden_values(make, expected_classes, expected_ood) -> None:
-    out = make().predict(query_batch())
+    with golden_dtype():
+        out = make().predict(query_batch())
     # Golden models are built and queried in float64 (golden_data.golden_dtype()): in float32,
     # training drifts across CPU BLAS backends (macOS arm64 vs Linux x86_64: Protonet OOD 5.0e-4,
     # GP classes 5.0e-5); in float64 the cross-platform deviation is ~1e-16, so GOLDEN_ATOL = 1e-6
@@ -453,7 +473,7 @@ git commit -m "test: seeded golden values and OOD ordering for both models (#187
 ```bash
 mkdir -p tests/fixtures
 .venv/bin/python - <<'EOF'
-import sys, json; sys.path.insert(0, "tests")
+import hashlib, sys, json; sys.path.insert(0, "tests")
 import torch
 from golden_data import trained_protonet, trained_gp, query_batch
 expected = {}
@@ -461,6 +481,7 @@ for name, make in (("protonet", trained_protonet), ("gp", trained_gp)):
     model = make(); path = f"tests/fixtures/{name}_v2.eq"; model.save(path)
     out = model.predict(query_batch())
     expected[name] = {"classes": out.classes.tolist(), "ood_scores": out.ood_scores.tolist()}
+    expected[name]["sha256"] = hashlib.sha256(open(path, "rb").read()).hexdigest()
 json.dump(expected, open("tests/fixtures/expected.json", "w"), indent=1)
 print({k: (len(v["classes"]), len(v["ood_scores"])) for k, v in expected.items()})
 EOF
@@ -485,6 +506,7 @@ that cannot keep this test passing has broken compatibility and must gate its
 change behind a persisted setting with a legacy default (roadmap rule 3).
 """
 
+import hashlib
 import json
 import os
 
@@ -502,6 +524,8 @@ EXPECTED = json.load(open(os.path.join(FIXTURES, "expected.json")))
 @pytest.mark.parametrize("name, cls", [("protonet", eq.EquineProtonet), ("gp", eq.EquineGP)])
 def test_v2_fixture_loads_and_predicts_the_same(name, cls) -> None:
     path = os.path.join(FIXTURES, f"{name}_v2.eq")
+    with open(path, "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == EXPECTED[name]["sha256"]
     model = eq.load_equine_model(path)
     assert isinstance(model, cls)
     out = model.predict(query_batch())
