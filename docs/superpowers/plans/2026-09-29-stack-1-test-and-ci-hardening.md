@@ -723,7 +723,7 @@ Branch: `git checkout -b stack1/pr-1e-ci-tooling` from PR-1d's tip.
 
 **Files:** Modify `pyproject.toml` (tox `[testenv]`, `[testenv:coverage]`, `[testenv:pyright]`, `[testenv:format]`, `[testenv:enforce-format]` blocks only), `.pre-commit-config.yaml`.
 
-- [ ] **Step 1: tox `[testenv]`:** add `extras = tests` and reduce `deps` to what the extra lacks: `pytest-xdist`, `tzdata`. Remove `pytest`, `pytest-cov`, `hypothesis`, `numpy`, `torch` from `deps` (they come from the package's dependencies and the `tests` extra; the hypothesis pin in `pyproject.toml` is now what CI runs). `[testenv:coverage]`: `extras = tests`, `deps = {[testenv]deps}` plus `coverage[toml]`; drop its duplicated numpy/torch lines. `[testenv:pyright]`: replace the stale `numpy<2.0.0 ; darwin`/`numpy`/`torch>=2.0.0` deps with just `pyright` (the package's own dependencies install torch >= 2.6), and change the description to say it scans `src/` (`tests/` is not scanned; PR-5c decides whether to add it). Pin ruff in `[testenv:format]` and `[testenv:enforce-format]` to the same version the pre-commit hook uses (next step).
+- [ ] **Step 1: tox `[testenv]`:** add `extras = tests` and reduce `deps` to what the extra lacks: `pytest-xdist` (drop `tzdata` too: nothing uses time zones; it came from a tox template). Remove `pytest`, `pytest-cov`, `hypothesis`, `numpy`, `torch` from `deps` (they come from the package's dependencies and the `tests` extra; the hypothesis pin in `pyproject.toml` is now what CI runs). `[testenv:coverage]`: `extras = tests`, `deps = {[testenv]deps}` plus `coverage[toml]`; drop its duplicated numpy/torch lines. `[testenv:pyright]`: replace the stale `numpy<2.0.0 ; darwin`/`numpy`/`torch>=2.0.0` deps with just `pyright` (the package's own dependencies install torch >= 2.6), and change the description to say it scans `src/` (`tests/` is not scanned; PR-5c decides whether to add it). Pin ruff once, in `[testenv:format]` (`ruff==<version>` with a `# keep in sync with the ruff rev in .pre-commit-config.yaml` comment), and have `[testenv:enforce-format]` reuse it via `{[testenv:format]deps}` plus `codespell==<version>`. Change `enforce-format`'s command to `codespell src/` and its description to say source code and test suite: `[tool.codespell] skip = 'docs/*'` already makes the `docs/` argument a no-op (whether to spell-check docs is a PR-4b decision).
 
 - [ ] **Step 2: `.pre-commit-config.yaml`:** set the `ruff-pre-commit` `rev` to the current ruff release (0.16.9 on 2026-09-29; check `uvx ruff --version` and that the mirror has the tag: `git ls-remote --tags https://github.com/astral-sh/ruff-pre-commit`) and pin tox's `ruff==<version>` to match; add the codespell hook:
 
@@ -732,7 +732,7 @@ Branch: `git checkout -b stack1/pr-1e-ci-tooling` from PR-1d's tip.
     rev: v2.4.3
     hooks:
     -   id: codespell
-        args: [src/, docs/]
+        args: [src/]
         pass_filenames: false
         additional_dependencies: [tomli]
 ```
