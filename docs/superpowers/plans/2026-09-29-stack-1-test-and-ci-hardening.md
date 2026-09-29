@@ -342,8 +342,8 @@ def trained_gp(seed: int = SEED):
     model.train_model(
         dataset,
         torch.nn.CrossEntropyLoss(),
-        torch.optim.SGD(model.parameters(), lr=0.01),
-        num_epochs=5,
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=40,  # 5 epochs at lr 0.01 left the GP undertrained (class probs ~1/3)
         batch_size=32,
         vis_support=True,
         support_size=10,
