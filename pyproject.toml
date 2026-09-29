@@ -213,6 +213,7 @@ commands=
 description = Uses mkdocs to generate html for the docs. Stores the
               results in `.tox/docs/build/html/`.
 basepython=python3.11
+extras =
 deps=[docs]
 commands=
     mkdocs build --clean --strict
