@@ -281,7 +281,12 @@ def test_validation_metrics_are_reset_between_epochs() -> None:
     # compute() once per epoch, after iterating the validation set.
     seen: list[int] = []
     orig_compute = metric.compute
-    metric.compute = lambda: (seen.append(metric.update_count), orig_compute())[1]
+
+    def recording_compute():
+        seen.append(metric.update_count)
+        return orig_compute()
+
+    metric.compute = recording_compute
     model = eq.EquineGP(
         BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
     )

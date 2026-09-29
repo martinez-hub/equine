@@ -6,14 +6,15 @@ loading and keep producing the same predictions.
 
 tests/fixtures/*_v2*.eq were written by the code at the commit that added them
 (format version 2, float32; golden_data documents how). Do NOT regenerate them
-when outputs change; a later PR
-that cannot keep this test passing has broken compatibility and must gate its
-change behind a persisted setting with a legacy default (roadmap rule 3).
+when outputs change; a later PR that cannot keep this test passing has broken
+compatibility and must gate its change behind a persisted setting with a
+legacy default (roadmap rule 3).
 
 Load-then-predict agrees within 1e-5 across macOS arm64 and Linux x86_64.
-expected.json also records each file's SHA-256, asserted before loading, so a
-regenerated fixture cannot pass without a visible edit to expected.json, and
-the persisted metadata (names, temperature, model type) read back on load.
+expected.json records each file's SHA-256, asserted before loading, so a
+regenerated fixture cannot pass without a visible edit to expected.json. It
+also records the persisted metadata (names, temperature, model type), which
+is asserted after load.
 """
 
 import hashlib
@@ -60,6 +61,7 @@ def test_v2_fixture_loads_and_predicts_the_same(name) -> None:
     model = eq.load_equine_model(path)
     assert isinstance(model, cls)
     for key, expected in EXPECTED[name]["metadata"].items():
+        assert key in METADATA_ACCESSORS, f"no accessor for metadata key {key!r}"
         if isinstance(expected, float):
             expected = pytest.approx(expected)
         assert METADATA_ACCESSORS[key](model) == expected, key

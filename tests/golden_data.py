@@ -19,8 +19,7 @@ cross-platform reproducibility: in float32 the same seeded training run
 drifted between macOS arm64 and Linux x86_64 by up to 5.0e-4 (Protonet OOD)
 and 5.0e-5 (GP classes) because BLAS summation order accumulates over the
 training steps; in float64 the deviation is below 1e-15, so tests/test_golden.py
-can hold atol=1e-6 and still catch subtle numeric changes. The committed
-fixtures in tests/fixtures/ remain float32 and are never regenerated.
+can hold atol=1e-6 and still catch subtle numeric changes.
 """
 
 import contextlib
@@ -144,6 +143,8 @@ def fixture_protonet_nondefault(seed: int = SEED) -> eq.EquineProtonet:
     feature and label names) on top of ``trained_protonet``'s training. Runs
     in the default dtype, NOT inside ``golden_dtype()``, like the fixture.
     Must not be re-run to regenerate the file; expected.json pins its SHA-256.
+    Deliberately shares no code with ``trained_protonet``: this is a frozen
+    record, and retuning the golden builder must not silently change it.
     """
     torch.manual_seed(seed)
     dataset, _, _ = separable_dataset(seed)
@@ -175,7 +176,8 @@ def fixture_gp_nondefault(seed: int = SEED) -> eq.EquineGP:
     temperature differs from 1.0 (``EquineGP.__init__`` has no use_temperature
     since 0.1.6). Runs in the default dtype, NOT inside ``golden_dtype()``,
     like the fixture. Must not be re-run to regenerate the file; expected.json
-    pins its SHA-256.
+    pins its SHA-256. Deliberately shares no code with ``trained_gp``: this is
+    a frozen record, and retuning the golden builder must not silently change it.
     """
     torch.manual_seed(seed)
     dataset, _, _ = separable_dataset(seed)
