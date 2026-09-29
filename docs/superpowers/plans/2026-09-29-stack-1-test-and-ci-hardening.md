@@ -392,6 +392,7 @@ PROTONET_CLASSES = [[...], [...], [...]]  # paste from the generator
 PROTONET_OOD = [...]
 GP_CLASSES = [[...], [...], [...]]
 GP_OOD = [...]
+GOLDEN_ATOL = 1e-3
 
 
 @pytest.mark.parametrize(
@@ -403,8 +404,12 @@ GP_OOD = [...]
 )
 def test_predictions_match_golden_values(make, expected_classes, expected_ood) -> None:
     out = make().predict(query_batch())
-    assert torch.allclose(out.classes, torch.tensor(expected_classes), atol=1e-6)
-    assert torch.allclose(out.ood_scores, torch.tensor(expected_ood), atol=1e-6)
+    # GOLDEN_ATOL = 1e-3: training is deterministic per machine but drifts across CPU BLAS
+    # backends (measured macOS arm64 vs Linux x86_64: Protonet OOD 5.0e-4, GP classes 5.0e-5).
+    # Load-then-predict (test_fixtures.py) is exact across platforms and keeps atol 1e-6.
+    assert out.classes.argmax(dim=1).tolist() == [0, 1, 2]
+    assert torch.allclose(out.classes, torch.tensor(expected_classes), atol=GOLDEN_ATOL)
+    assert torch.allclose(out.ood_scores, torch.tensor(expected_ood), atol=GOLDEN_ATOL)
 
 
 @pytest.mark.parametrize("make", [trained_protonet, trained_gp], ids=["protonet", "gp"])
