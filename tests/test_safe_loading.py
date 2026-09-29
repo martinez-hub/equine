@@ -194,8 +194,8 @@ def test_loading_untrusted_file_does_not_execute_payload(tmp_path, loader) -> No
 
 def _assert_weights_only_safe_layout(path: str) -> dict:
     checkpoint = torch.load(path, weights_only=True)  # must not raise
-    # `bytes` is only accepted by the weights-only unpickler from torch 2.5 on,
-    # so the TorchScript archive has to travel as a uint8 tensor.
+    # The TorchScript archive travels as a uint8 tensor so the checkpoint
+    # contains only tensors and plain values.
     archive = checkpoint["embed_jit_save"]
     assert isinstance(archive, torch.Tensor) and archive.dtype == torch.uint8
     assert checkpoint["equine_format_version"] == 2
@@ -335,24 +335,49 @@ def test_opt_in_does_not_bypass_safe_path_for_safe_layout_with_payload(
     assert not marker.exists()
 
 
-def test_jit_archive_tensor_round_trips_bytes_without_numpy() -> None:
-    """`load_jit_archive`'s tensor-to-bytes conversion must exactly recover the
-    original bytes without going through numpy (see issue #168 follow-up):
-    `.numpy()` raises on torch < 2.3 with numpy 2 installed, a combination
-    pyproject allows, and this path has no other reason to depend on numpy.
-    """
-    import random
+def test_jit_archive_tensor_round_trips() -> None:
+    """`jit_archive_to_tensor` followed by `load_jit_archive` must reconstruct
+    a scripted module whose outputs match the module that was saved."""
+    from equine.utils import jit_archive_to_tensor, load_jit_archive
 
-    from equine.utils import jit_archive_to_tensor
+    module = BasicEmbeddingModel(6, 3)
+    buffer = _jit_buffer(module)
+    x = torch.rand(4, 6)
+    expected = module(x)
 
-    # 0 is excluded: `torch.frombuffer` itself rejects an empty buffer, which
-    # is a pre-existing limitation of `jit_archive_to_tensor` unrelated to
-    # this conversion and not a size a real TorchScript archive would have.
-    for length in (1, 3, 7, 8, 9, 37, 129):
-        original = bytes(random.randrange(256) for _ in range(length))
-        tensor = jit_archive_to_tensor(io.BytesIO(original))
-        recovered = bytes(tensor.detach().cpu().contiguous().untyped_storage())
-        assert recovered == original
+    tensor = jit_archive_to_tensor(buffer)
+    rebuilt = load_jit_archive(tensor)
+    assert torch.allclose(rebuilt(x), expected, atol=1e-6)
+
+
+def test_archive_bytes_handles_offset_view() -> None:
+    """A uint8 tensor that is an offset, non-full view of a larger storage
+    must convert to exactly its own bytes, not the whole backing storage."""
+    from equine.utils import _archive_bytes
+
+    padded = torch.arange(20, dtype=torch.uint8)
+    view = padded[5:10]
+    assert view.storage_offset() != 0
+
+    assert _archive_bytes(view) == bytes(range(5, 10))
+
+
+def test_archive_bytes_is_fast_for_large_tensors() -> None:
+    """`_archive_bytes` must convert a multi-megabyte archive quickly. The
+    conversion this replaced iterated the storage one Python int at a time
+    (~1s/MB), so a 4 MB tensor must comfortably clear a generous bound."""
+    import time
+
+    from equine.utils import _archive_bytes
+
+    tensor = torch.randint(0, 256, (4_000_000,), dtype=torch.uint8)
+
+    start = time.perf_counter()
+    result = _archive_bytes(tensor)
+    elapsed = time.perf_counter() - start
+
+    assert result == tensor.numpy().tobytes()
+    assert elapsed < 0.5
 
 
 def test_load_jit_archive_accepts_all_stored_forms() -> None:
@@ -428,3 +453,18 @@ def test_load_checkpoint_accepts_supported_torch(monkeypatch, tmp_path) -> None:
 
     result = _load_without_unsafe_warning(lambda: load_checkpoint(str(path)))
     assert result == {"a": 1}
+
+
+def test_load_rejects_newer_format_version(tmp_path) -> None:
+    """A file declaring a format version newer than this EQUINE build
+    understands must be rejected rather than silently misread."""
+    model, _ = _trained_protonet()
+    path = tmp_path / "future.eq"
+    model.save(str(path))
+
+    checkpoint = torch.load(path, weights_only=True)
+    checkpoint["equine_format_version"] = 3
+    torch.save(checkpoint, path)
+
+    with pytest.raises(ValueError, match="Unsupported EQUINE model format version"):
+        eq.load_equine_model(str(path))

@@ -123,10 +123,13 @@ def load_checkpoint(
         return torch.load(path, map_location=map_location, weights_only=False)
 
     try:
-        return torch.load(path, map_location=map_location, weights_only=True)
+        checkpoint = torch.load(path, map_location=map_location, weights_only=True)
     except pickle.UnpicklingError as err:
         if not allow_unsafe_legacy_format:
             raise ValueError(_UNSAFE_LOAD_ERROR.format(path=path)) from err
+    else:
+        _validate_format_version(checkpoint)
+        return checkpoint
 
     warnings.warn(
         _UNSAFE_LOAD_WARNING.format(path=path), UserWarning, stacklevel=_stacklevel
@@ -134,15 +137,44 @@ def load_checkpoint(
     return torch.load(path, map_location=map_location, weights_only=False)
 
 
+def _validate_format_version(checkpoint: Any) -> None:
+    """
+    Raise if a loaded checkpoint declares a format version newer than this
+    EQUINE build understands.
+
+    Files without an ``equine_format_version`` key are legacy files written
+    before the key existed and are left alone here.
+    """
+    if isinstance(checkpoint, dict) and "equine_format_version" in checkpoint:
+        version = checkpoint["equine_format_version"]
+        if version > EQUINE_FORMAT_VERSION:
+            raise ValueError(
+                f"Unsupported EQUINE model format version {version}; this "
+                f"EQUINE supports up to {EQUINE_FORMAT_VERSION}. Upgrade EQUINE."
+            )
+
+
 def jit_archive_to_tensor(buffer: io.BytesIO) -> torch.Tensor:
     """
     Convert a serialized TorchScript archive into a ``uint8`` tensor for saving.
 
-    A raw ``bytes`` object is only accepted by ``torch.load(weights_only=True)``
-    from torch 2.5 onward, while a tensor is accepted on every supported
-    version, so the archive travels inside the checkpoint as a tensor.
+    The archive travels as a uint8 tensor so the checkpoint contains only
+    tensors and plain values.
     """
     return torch.frombuffer(bytearray(buffer.getvalue()), dtype=torch.uint8)
+
+
+def _archive_bytes(archive: torch.Tensor) -> bytes:
+    """
+    Return the exact bytes of a ``uint8`` archive tensor.
+
+    Uses ``.numpy().tobytes()`` rather than iterating ``untyped_storage()``
+    element-by-element, which is dramatically faster for large archives.
+    ``.numpy()`` operates on the tensor's own data (respecting its shape,
+    stride and storage offset), so a non-full or offset view still yields
+    exactly that view's bytes, not the whole backing storage.
+    """
+    return archive.detach().cpu().contiguous().numpy().tobytes()
 
 
 def load_jit_archive(
@@ -156,12 +188,7 @@ def load_jit_archive(
     ``bytes`` and ``io.BytesIO`` forms found in older files.
     """
     if isinstance(archive, torch.Tensor):
-        # Avoid `.numpy()`: on torch < 2.3 with numpy 2 installed (a
-        # combination pyproject allows), the numpy interop raises, and this
-        # code path otherwise has no reason to depend on numpy at all.
-        buffer = io.BytesIO(
-            bytes(archive.detach().cpu().contiguous().untyped_storage())
-        )
+        buffer = io.BytesIO(_archive_bytes(archive))
     elif isinstance(archive, (bytes, bytearray)):
         buffer = io.BytesIO(archive)
     else:

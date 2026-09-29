@@ -933,8 +933,9 @@ class EquineProtonet(Equine):
 
         # Everything stored here must be readable by torch.load(weights_only=True)
         # on every supported torch version: tensors, containers and plain
-        # scalars/strings only (issue #168). The TorchScript archive is a uint8
-        # tensor because raw bytes are only accepted from torch 2.5 on.
+        # scalars/strings only (issue #168). The TorchScript archive travels as
+        # a uint8 tensor so the checkpoint contains only tensors and plain
+        # values.
         save_data = {
             "equine_format_version": EQUINE_FORMAT_VERSION,
             "embed_jit_save": jit_archive_to_tensor(buffer),
