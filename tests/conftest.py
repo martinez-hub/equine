@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import glob
+import math
 import os
 import tempfile
 import zipfile
@@ -90,32 +91,55 @@ class BasicEmbeddingModel(torch.nn.Module):
 
 @st.composite
 def random_dataset(draw):
-    dataset_row_count = draw(st.integers(min_value=100, max_value=100))
-    dataset_col_count = draw(st.integers(min_value=1, max_value=1000))
-    shape = (dataset_row_count, dataset_col_count)
-    dataset_x = torch.rand(shape)
+    """A labelled dataset plus the training arguments that fit its shape.
 
-    num_classes = draw(
-        st.integers(min_value=3, max_value=int(dataset_row_count / 30))
-    )  # requires at least 30 examples per class
-    way = draw(st.integers(min_value=2, max_value=num_classes))
-    dataset_y = []
-    for i in range(num_classes):
-        dataset_y += [i] * int(dataset_row_count / num_classes)
+    Returns ``(dataset, num_classes, train_kwargs)``. ``train_kwargs`` is passed
+    to ``EquineProtonet.train_model`` (GP tests take what they need from it):
+    the defaults (way=3, support_size=25, episode_size=100) only fit a 100-row,
+    3-class dataset, and otherwise generate_episode raises. Torch is seeded from
+    a drawn integer so hypothesis can replay and shrink failing examples.
 
-    dataset_y += [0] * (dataset_row_count - len(dataset_y))
-    dataset_y = torch.Tensor(dataset_y)
-
+    Shape: 2..5 balanced classes, every class has >= 30 rows, 120 <= rows <= 200.
+    """
+    seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
+    torch.manual_seed(seed)
+    num_classes = draw(st.integers(min_value=2, max_value=5))
+    rows_per_class = draw(
+        st.integers(
+            min_value=max(30, math.ceil(120 / num_classes)),
+            max_value=200 // num_classes,
+        )
+    )
+    rows = rows_per_class * num_classes
+    cols = draw(st.integers(min_value=1, max_value=64))
+    dataset_x = torch.rand(rows, cols)
+    dataset_y = torch.arange(num_classes).repeat_interleave(rows_per_class).float()
     dataset = torch.utils.data.TensorDataset(dataset_x, dataset_y)  # type: ignore
 
-    return dataset, num_classes, way
+    # train_model splits with stratified_train_test_split, which holds out
+    # round(count * calib_frac) rows of every class, so each class keeps
+    # r - round(0.2 r) >= floor(0.8 r) training rows. per_class_train is that
+    # lower bound (>= 24 for r >= 30); the extra -5 on support_size keeps every
+    # class with several query rows after the support is taken.
+    calib_frac = 0.2
+    per_class_train = int(rows * (1 - calib_frac) // num_classes)
+    way = min(3, num_classes)
+    support_size = min(10, per_class_train - 5)
+    episode_size = min(50, way * (per_class_train - support_size))
+    train_kwargs = {
+        "calib_frac": calib_frac,
+        "way": way,
+        "support_size": support_size,
+        "episode_size": episode_size,
+    }
+    return dataset, num_classes, train_kwargs
 
 
 def use_basic_embedding_model(random_dataset):
-    dataset, num_classes, _ = random_dataset
+    dataset, num_classes, train_kwargs = random_dataset
     X, _ = dataset.tensors
     embedding_model = BasicEmbeddingModel(X.shape[1], num_classes)
-    return dataset, num_classes, X, embedding_model
+    return dataset, num_classes, X, embedding_model, train_kwargs
 
 
 def assert_valid_prediction(

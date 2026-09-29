@@ -13,12 +13,16 @@ import equine as eq
 @given(random_dataset=random_dataset())
 @settings(deadline=None, max_examples=5)
 def test_equine_protonet_instantiation(random_dataset) -> None:
-    dataset, num_classes, _ = random_dataset
+    dataset, num_classes, train_kwargs = random_dataset
     X, Y = dataset.tensors
     embedding_model = BasicEmbeddingModel(X.shape[1], num_classes)
 
     model = eq.EquineProtonet(embedding_model, num_classes)
-    model.train_model(torch.utils.data.TensorDataset(X, Y), num_episodes=0)  # type: ignore
+    model.train_model(
+        torch.utils.data.TensorDataset(X, Y),  # type: ignore
+        num_episodes=0,
+        **train_kwargs,
+    )
 
 
 @given(random_dataset=random_dataset())
@@ -77,3 +81,20 @@ def test_model_summary(random_dataset) -> None:
     assert_valid_prediction(eq_out, len(X), num_classes)
 
     eq.utils.generate_model_summary(model, eq_out, Y)
+
+
+@given(random_dataset=random_dataset())
+@settings(deadline=None, max_examples=20)
+def test_random_dataset_shape_and_training_args(random_dataset) -> None:
+    dataset, num_classes, train_kwargs = random_dataset
+    X, Y = dataset.tensors
+    rows = X.shape[0]
+    assert 120 <= rows <= 200
+    assert 2 <= num_classes <= 5
+    labels, counts = torch.unique(Y, return_counts=True)
+    assert len(labels) == num_classes
+    assert counts.min() >= 30
+    assert train_kwargs["way"] == min(3, num_classes)
+    per_class_train = int(rows * (1 - train_kwargs["calib_frac"]) // num_classes)
+    assert 1 <= train_kwargs["support_size"] < per_class_train
+    assert train_kwargs["episode_size"] >= train_kwargs["way"]
