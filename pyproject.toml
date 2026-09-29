@@ -180,6 +180,7 @@ description = Ensure that the equine source code under `src/` scans clean
               type-completeness score. The test suite is not scanned.
 usedevelop = true
 basepython = python3.11
+extras =
 deps = pyright
 
 commands = pyright src/ --level=error
