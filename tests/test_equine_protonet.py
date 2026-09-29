@@ -14,6 +14,7 @@ from conftest import (
     use_basic_embedding_model,
     use_save_load_model_tests,
 )
+from golden_data import CLASSES, FEATURES, separable_dataset
 from hypothesis import given, settings, strategies as st
 
 import equine as eq
@@ -42,6 +43,34 @@ def test_compute_shared_covariance_refuses_unit_covariance() -> None:
     class_cov_dict = OrderedDict({0: torch.ones(3), 1: torch.ones(3)})
     with pytest.raises(ValueError, match="not UNIT"):
         model.model.compute_shared_covariance(class_cov_dict, eq.CovType.UNIT)
+
+
+def _briefly_trained_protonet_with_data():
+    """A small float32 model trained just enough for update_support to run
+    (train_model sets the statistics update_support relies on)."""
+    torch.manual_seed(0)
+    dataset, x, y = separable_dataset()
+    model = eq.EquineProtonet(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES)
+    model.train_model(
+        dataset, num_episodes=5, calib_frac=0.2, support_size=10, way=3, episode_size=30
+    )
+    return model, x, y.float()
+
+
+def test_update_support_sets_label_names() -> None:
+    model, x, y = _briefly_trained_protonet_with_data()
+    assert model.get_label_names() is None
+    model.update_support(x, y, 0.5, label_names=["a", "b", "c"])
+    assert model.get_label_names() == ["a", "b", "c"]
+
+
+def test_update_support_rejects_wrong_label_names_length() -> None:
+    model, x, y = _briefly_trained_protonet_with_data()
+    with pytest.raises(
+        ValueError,
+        match=r"The length of label_names \(2\) does not match the number of classes \(3\)",
+    ):
+        model.update_support(x, y, 0.5, label_names=["only", "two"])
 
 
 @st.composite
