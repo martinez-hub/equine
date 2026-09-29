@@ -1,6 +1,7 @@
 
 repos:
 -   repo: https://github.com/astral-sh/ruff-pre-commit
+    # keep in sync with ruff== in pyproject.toml [testenv:format]
     rev: v0.16.9
     hooks:
     -   id: ruff-check
@@ -12,6 +13,6 @@ repos:
     rev: v2.4.3
     hooks:
     -   id: codespell
-        args: [src/, docs/]
+        args: [src/]
         pass_filenames: false
         additional_dependencies: [tomli]

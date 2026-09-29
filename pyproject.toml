@@ -158,7 +158,6 @@ description = Runs test suite parallelized in the specified python environment a
 passenv = *
 extras = tests
 deps = pytest-xdist
-       tzdata
 commands = pytest tests/ {posargs: -n auto --maxprocesses=4}
 
 
@@ -192,22 +191,23 @@ description = Applies ruff's autofixes (e.g. removes unused imports) and formats
               failing `enforce-format` run.
 skip_install=true
 deps =
+    # keep in sync with the ruff rev in .pre-commit-config.yaml
     ruff==0.16.9
 commands =
     ruff check --fix src/ tests/
     ruff format src/ tests/
 
 [testenv:enforce-format]
-description = Ensures that source materials code and docs and test suite adhere to 
-              formatting and code-quality standards.
+description = Ensures that the source code and test suite adhere to formatting
+              and code-quality standards.
 skip_install=true
 basepython=python3.11
-deps=ruff==0.16.9
-     codespell
+deps={[testenv:format]deps}
+     codespell==2.4.3
 commands=
     ruff format src/ tests/ --diff --check
     ruff check src/ tests/
-    codespell src/ docs/
+    codespell src/
 
 [testenv:docs]
 description = Uses mkdocs to generate html for the docs. Stores the
