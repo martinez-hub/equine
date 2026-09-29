@@ -11,7 +11,8 @@ change behind a persisted setting with a legacy default (roadmap rule 3).
 
 Load-then-predict agrees within 1e-5 across macOS arm64 and Linux x86_64.
 expected.json also records each file's SHA-256, asserted before loading, so a
-regenerated fixture cannot pass without a visible edit to expected.json.
+regenerated fixture cannot pass without a visible edit to expected.json, and
+the persisted metadata (names, temperature, model type) read back on load.
 """
 
 import hashlib
@@ -28,6 +29,14 @@ FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 with open(os.path.join(FIXTURES, "expected.json")) as f:
     EXPECTED = json.load(f)
 
+# How each key of expected.json's "metadata" is read back from a loaded model.
+METADATA_ACCESSORS = {
+    "feature_names": lambda model: model.get_feature_names(),
+    "label_names": lambda model: model.get_label_names(),
+    "temperature": lambda model: float(model.temperature),
+    "modelType": lambda model: model.train_summary["modelType"],
+}
+
 
 @pytest.mark.parametrize(
     "name, cls", [("protonet", eq.EquineProtonet), ("gp", eq.EquineGP)]
@@ -38,13 +47,18 @@ def test_v2_fixture_loads_and_predicts_the_same(name, cls) -> None:
         assert hashlib.sha256(f.read()).hexdigest() == EXPECTED[name]["sha256"]
     model = eq.load_equine_model(path)
     assert isinstance(model, cls)
+    for key, expected in EXPECTED[name]["metadata"].items():
+        if isinstance(expected, float):
+            expected = pytest.approx(expected)
+        assert METADATA_ACCESSORS[key](model) == expected, key
     out = model.predict(query_batch())
     # Fixed op count on load (the GP recomputes its covariance via cholesky), no
     # training amplification: measured x86 drift is 4.8e-7. A real compatibility
-    # break moves outputs by more than 1e-2 or fails to load.
+    # break moves outputs by more than 1e-2 or fails to load. rtol=0 keeps
+    # atol the whole bound.
     assert torch.allclose(
-        out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-5
+        out.classes, torch.tensor(EXPECTED[name]["classes"]), atol=1e-5, rtol=0
     )
     assert torch.allclose(
-        out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-5
+        out.ood_scores, torch.tensor(EXPECTED[name]["ood_scores"]), atol=1e-5, rtol=0
     )

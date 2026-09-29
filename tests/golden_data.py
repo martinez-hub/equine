@@ -4,9 +4,12 @@
 """Deterministic data and models for golden-value and cross-version tests.
 
 Everything here is seeded so that the same code produces the same numbers on
-CPU across runs, platforms and BLAS backends. Golden literals in
-tests/test_golden.py and the fixture files in tests/fixtures/ are produced by
-these functions.
+CPU across runs, platforms and BLAS backends. The golden literals in
+tests/test_golden.py are produced by these functions inside ``golden_dtype()``.
+The fixture files in tests/fixtures/ were written by the float32 versions of
+these builders at commit 4c2a7c4 and are never regenerated, so the current
+(float64) builders do NOT reproduce them; tests/fixtures/expected.json pins
+their predictions and SHA-256 instead.
 
 The golden path (``trained_protonet``, ``trained_gp`` and the query batches,
 all used inside ``golden_dtype()``) runs in float64 precisely for

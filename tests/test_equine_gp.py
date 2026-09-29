@@ -269,6 +269,7 @@ def test_equine_gp_save_load_with_feature_and_label_names(random_dataset) -> Non
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="#171: EquineGP.train_model never resets val_metrics between epochs",
 )
 def test_validation_metrics_are_reset_between_epochs() -> None:
@@ -276,6 +277,11 @@ def test_validation_metrics_are_reset_between_epochs() -> None:
     # float labels, like the dataset test_equine_gp_train_from_scratch_with_validation passes
     val = torch.utils.data.TensorDataset(x[:64], y[:64].float())
     metric = torchmetrics.classification.MulticlassAccuracy(num_classes=CLASSES)
+    # Record how many updates each epoch's compute() sees. train_model calls
+    # compute() once per epoch, after iterating the validation set.
+    seen: list[int] = []
+    orig_compute = metric.compute
+    metric.compute = lambda: (seen.append(metric.update_count), orig_compute())[1]
     model = eq.EquineGP(
         BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
     )
@@ -290,7 +296,8 @@ def test_validation_metrics_are_reset_between_epochs() -> None:
     )
     # train_model iterates the validation set with a DataLoader of the training
     # batch_size and calls metric.update once per batch: 64 rows / 32 = 2
-    # updates per epoch. An implementation that resets the metric each epoch
-    # (or after compute()) leaves 2 on the last epoch; today the count
-    # accumulates to 2 * 3 = 6 and each epoch's compute() covers all prior epochs.
-    assert metric.update_count == 2
+    # updates per epoch. reset() zeroes update_count, so an implementation that
+    # resets the metric once per epoch (before its updates or right after
+    # compute()) shows every compute() exactly 2 updates; today the count
+    # accumulates and each epoch's compute() covers all prior epochs.
+    assert seen == [2, 2, 2]

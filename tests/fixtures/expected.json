@@ -22,7 +22,13 @@
    0.10947485268115997,
    0.21058975160121918
   ],
-  "sha256": "57743b89da56a364a811f61312fd080729b731f052275977881f81b762706f4a"
+  "sha256": "57743b89da56a364a811f61312fd080729b731f052275977881f81b762706f4a",
+  "metadata": {
+   "feature_names": null,
+   "label_names": null,
+   "temperature": 1.0,
+   "modelType": "EquineProtonet"
+  }
  },
  "gp": {
   "classes": [
@@ -47,6 +53,12 @@
    0.5272457003593445,
    0.6031004190444946
   ],
-  "sha256": "459d02958822464a6016783720b7e51251bf32a9a22075635f21d9a2ee893734"
+  "sha256": "459d02958822464a6016783720b7e51251bf32a9a22075635f21d9a2ee893734",
+  "metadata": {
+   "feature_names": null,
+   "label_names": null,
+   "temperature": 1.0,
+   "modelType": "EquineGP"
+  }
  }
 }

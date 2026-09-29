@@ -303,6 +303,7 @@ def test_expected_calibration_error_known_values() -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="#174: generate_model_metrics passes (target, preds) to torchmetrics, "
     "which expects (preds, target)",
 )

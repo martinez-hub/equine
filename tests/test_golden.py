@@ -39,7 +39,9 @@ GP_OOD = [0.6446385, 0.62214935, 0.64370546]
 
 # The golden path runs in float64: measured macOS arm64 vs Linux x86_64 deviation
 # of every golden quantity is below 1e-15 (in float32 it was up to 5.0e-4), so
-# 1e-6 is safe and still catches subtle numeric changes.
+# 1e-6 is safe and still catches subtle numeric changes. The comparisons pass
+# rtol=0 so this is the whole bound: torch.allclose's default rtol=1e-5 would
+# loosen it to ~1.1e-5 for values near 1.0.
 GOLDEN_ATOL = 1e-6
 
 
@@ -59,11 +61,13 @@ def test_predictions_match_golden_values(make, expected_classes, expected_ood) -
         out.classes,
         torch.tensor(expected_classes, dtype=out.classes.dtype),
         atol=GOLDEN_ATOL,
+        rtol=0,
     )
     assert torch.allclose(
         out.ood_scores,
         torch.tensor(expected_ood, dtype=out.ood_scores.dtype),
         atol=GOLDEN_ATOL,
+        rtol=0,
     )
 
 
