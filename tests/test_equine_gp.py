@@ -315,3 +315,6 @@ def test_device_type_is_deprecated_alias() -> None:
     with pytest.warns(DeprecationWarning, match="device_type"):
         assert model.device_type == "cpu"
     assert model.device == "cpu"
+    with pytest.warns(DeprecationWarning, match="device_type"):
+        model.device_type = "cpu"
+    assert model.device == "cpu"

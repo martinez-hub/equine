@@ -21,7 +21,12 @@ import numpy as np
 import pytest
 import torch
 from beartype.roar import BeartypeCallHintParamViolation
-from conftest import BasicEmbeddingModel, _rewrite_zip, available_devices
+from conftest import (
+    BasicEmbeddingModel,
+    _rewrite_zip,
+    assert_on_device,
+    available_devices,
+)
 
 import equine as eq
 import equine.equine_gp
@@ -255,7 +260,7 @@ def test_gp_saved_on_the_accelerator_loads_onto_cpu(tmp_path) -> None:
         eq.load_equine_model(path, device="cpu"),
     ):
         assert loaded.device == "cpu"
-        assert {t.device.type for t in loaded.state_dict().values()} == {"cpu"}
+        assert_on_device(loaded, "cpu")
         actual = loaded.predict(X[:8])
         torch.testing.assert_close(
             actual.classes, expected.classes.cpu(), atol=1e-4, rtol=0

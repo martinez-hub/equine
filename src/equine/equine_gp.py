@@ -8,7 +8,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 import icontract
 import torch
@@ -24,6 +24,7 @@ from .utils import (
     EQUINE_FORMAT_VERSION,
     _checked_settings,
     _embedding_checkpoint,
+    _input_to_model,
     _plain_names,
     _rebuild_embedding,
     _require_device,
@@ -372,7 +373,8 @@ class _Laplace(torch.nn.Module):
                     )
                     u, info = torch.linalg.cholesky_ex(self.precision + jitter)
                     assert (info == 0).all(), "Precision matrix inversion failed!"
-                    self.covariance.copy_(_cholesky_inverse(u))
+                    covariance = cast(torch.Tensor, self.covariance)
+                    covariance.copy_(_cholesky_inverse(u))
 
                 self.recompute_covariance: bool = False
 
@@ -481,7 +483,8 @@ class EquineGP(Equine):
         init_temperature : float, optional
             What to use as the initial temperature (1.0 has no effect).
         device : str, optional
-            Either 'cuda' or 'cpu'.
+            The device to train the equine model on ('cpu', 'cuda' or 'mps';
+            defaults to cpu).
         feature_names : list[str], optional
             List of strings of the names of the tabular features (ex ["duration", "fiat_mean", ...])
         label_names : list[str], optional
@@ -530,6 +533,16 @@ class EquineGP(Equine):
             stacklevel=2,
         )
         return self.device
+
+    @device_type.setter
+    def device_type(self, value: str) -> None:
+        """Deprecated: assigns ``device`` (as before, without moving the module)."""
+        warnings.warn(
+            "EquineGP.device_type is deprecated; use EquineGP.device (a str)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.device = value
 
     def train_model(
         self,
@@ -796,11 +809,8 @@ class EquineGP(Equine):
         self.temperature.requires_grad = False
 
     def _input_to_model(self, X: torch.Tensor) -> torch.Tensor:
-        """Move ``X`` to the model device and cast it to the embedding's parameter dtype."""
-        param = next(self.model.feature_extractor.parameters(), None)
-        return X.to(
-            device=self.device, dtype=param.dtype if param is not None else X.dtype
-        )
+        """Move ``X`` to the model device; a floating input is cast to the embedding's dtype (see ``utils._input_to_model``)."""
+        return _input_to_model(X, self.model.feature_extractor, self.device)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """

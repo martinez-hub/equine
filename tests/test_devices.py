@@ -223,6 +223,38 @@ def test_predict_accepts_float64_input(build, device):
     assert_valid_prediction(model.predict(x[:5].double()), 5, CLASSES)
 
 
+class _TokenEmbedding(torch.nn.Module):
+    """Embedding model whose input is integer token ids, mean-pooled then projected."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.embed = torch.nn.Embedding(num_embeddings=50, embedding_dim=8)
+        self.linear = torch.nn.Linear(8, CLASSES)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(self.embed(x).mean(dim=1))
+
+
+@pytest.mark.parametrize("device", devices())
+def test_integer_inputs_are_moved_but_not_cast(device):
+    """The dtype cast applies to floating inputs only: nn.Embedding indices stay integer."""
+    torch.manual_seed(0)
+    y = torch.arange(90) % CLASSES
+    # class-specific ids, all below the 50 rows of the embedding table
+    x = torch.randint(0, 47, (90, 4)) // CLASSES * CLASSES + y[:, None]
+    model = eq.EquineProtonet(_TokenEmbedding(), CLASSES, device=device)
+    model.train_model(
+        torch.utils.data.TensorDataset(x, y),
+        num_episodes=5,
+        calib_frac=0.2,
+        support_size=10,
+        way=3,
+        episode_size=30,
+    )
+    assert x.dtype == torch.int64
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
 # --- device attribute ---------------------------------------------------------
 
 

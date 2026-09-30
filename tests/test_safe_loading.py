@@ -458,14 +458,12 @@ def test_legacy_path_loads_onto_the_cpu_unless_mapped(tmp_path, monkeypatch) -> 
         return real_load(*args, **{**kwargs, "map_location": "cpu"})
 
     monkeypatch.setattr(torch, "load", spy)
-    # "cuda:1" exists on no test machine; this test is about what reaches
-    # torch.load, so the up-front device validation is switched off.
-    monkeypatch.setattr(equine.utils, "_require_device", lambda *a, **k: None)
     with pytest.warns(UserWarning, match="unsafe"):
         load_checkpoint(path, allow_unsafe_legacy_format=True)
+    # "cpu:0" passes the device validation and reaches torch.load as given.
     with pytest.warns(UserWarning, match="unsafe"):
-        load_checkpoint(path, map_location="cuda:1", allow_unsafe_legacy_format=True)
-    assert locations == ["cpu", "cuda:1"]
+        load_checkpoint(path, map_location="cpu:0", allow_unsafe_legacy_format=True)
+    assert locations == ["cpu", "cpu:0"]
 
 
 # The transition's FutureWarning is asserted in its own test.

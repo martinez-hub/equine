@@ -765,6 +765,25 @@ def _shown(value: Any) -> str:
     return f"a {type(value).__name__}"
 
 
+def _input_to_model(
+    X: torch.Tensor, module: torch.nn.Module, device: str
+) -> torch.Tensor:
+    """
+    Move ``X`` to ``device`` for ``module``, casting a floating input to its dtype.
+
+    A floating-point input is cast to the dtype of the module's first
+    registered parameter (a mixed-dtype module follows whichever parameter is
+    registered first), so a float64 input to a float32 model is accepted and
+    MPS, which has no float64, works. A non-floating input (integer indices
+    for an ``nn.Embedding``, booleans) keeps its dtype and is only moved, as
+    is any input to a module without parameters.
+    """
+    param = next(module.parameters(), None)
+    if param is None or not X.is_floating_point():
+        return X.to(device=device)
+    return X.to(device=device, dtype=param.dtype)
+
+
 def _require_device(
     settings: dict[str, Any],
     hint: str = "",

@@ -25,6 +25,7 @@ from .utils import (
     EQUINE_FORMAT_VERSION,
     _checked_settings,
     _embedding_checkpoint,
+    _input_to_model,
     _outlier_kde_from_file,
     _plain_names,
     _rebuild_embedding,
@@ -151,12 +152,7 @@ class Protonet(torch.nn.Module):
         torch.Tensor
             Fully computed embedding tensors for the given X tensor.
         """
-        # Inputs follow the embedding: its device, and its parameter dtype so a
-        # float64 input to a float32 model is accepted (MPS has no float64).
-        param = next(self.embedding_model.parameters(), None)
-        X = X.to(
-            device=self.device, dtype=param.dtype if param is not None else X.dtype
-        )
+        X = _input_to_model(X, self.embedding_model, self.device)
         model_embeddings = self.embedding_model(X)
         head_embeddings = self.model_head(model_embeddings)
         return head_embeddings
@@ -1019,7 +1015,8 @@ class EquineProtonet(Equine):
         path : str
             The filename of the saved model.
         device : Optional[str]
-            The device to load the model onto.
+            The device to load the model onto. Overrides the device recorded
+            in the file; by default the model lands on the saved device.
         allow_unsafe_legacy_format : bool, optional
             Keyword-only. Permit loading a file written in the legacy pickle
             format. This uses unrestricted unpickling and can execute code
