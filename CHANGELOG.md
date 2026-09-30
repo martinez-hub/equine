@@ -13,7 +13,11 @@
   it; hooks on the embedding model still fire, once per call (previously
   twice). `EquineGP.forward` likewise no longer runs hooks registered on the
   inner `_Laplace` module (`model.model`), only on the wrapper and the
-  embedding model. `EquineGP.update_support`
+  embedding model. `EquineProtonet.update_support` and the OOD-calibration
+  step of `EquineProtonet.train_model` also no longer call `model.model`
+  through `__call__`, so hooks on it do not see those passes (temperature
+  calibration still calls it), and hooks on the embedding model fire once per
+  calibration pass there (previously twice). `EquineGP.update_support`
   and `EquineGP.load` embed the support set once per class; loaded GP models
   expose `support_embeddings`. The public `EquineGP.compute_prototypes()` still
   re-embeds the support and now refreshes `support_embeddings` as well.
