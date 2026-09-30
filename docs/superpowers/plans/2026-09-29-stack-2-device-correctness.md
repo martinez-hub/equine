@@ -16,9 +16,11 @@
 | Protonet train with `use_temperature=True` | works |
 | Protonet predict with `use_temperature=True` | `RuntimeError: ... mps:0 and cpu` at `dists / self.temperature` (#170) |
 | `temperature` buffer placement, both classes | stays on CPU (registered after `Equine.__init__` moved the module) (#170) |
-| GP train (no `vis_support`) | works |
-| GP predict, update_support, train with `vis_support=True`, save+load then predict | `RuntimeError: Tensor for argument input is on cpu but expected on mps` in `compute_embeddings` (#177, #173) |
-| GP `_Laplace` eval forward with inputs already on MPS | `NotImplementedError: aten::cholesky_inverse.out ... not implemented for MPS` |
+| Protonet raw `Protonet.support[label]` tensors after training on MPS | stay on CPU (stored as given); embeddings, prototypes, covariances land on MPS |
+| GP train (no `vis_support`) | works; `precision` on MPS, but `_Laplace.seen_data` is reassigned on CPU by `reset_precision_matrix` |
+| GP update_support, train with `vis_support=True` | `RuntimeError: Tensor for argument input is on cpu but expected on mps` in `compute_embeddings` (#177) |
+| GP predict, save+load then predict (forward already moves its input) | `NotImplementedError: aten::cholesky_inverse.out ... not implemented for MPS` (#173) |
+| Predict with float64 input, model on CPU, both classes | `RuntimeError: mat1 and mat2 must have the same dtype, but got Double and Float` (no cast anywhere today) |
 | Protonet predict with float64 input, model on MPS | `TypeError: Cannot convert a MPS Tensor to float64` |
 | Protonet `update_support` on an untrained (training-mode) model, CPU | `AttributeError: 'Protonet' object has no attribute 'global_mean'` (#179) |
 | GP `predict` after an explicit `.train()`, CPU | `AssertionError: Did not reset precision matrix at start of epoch` on the third call (#209) |
@@ -141,13 +143,13 @@ def _gp(device):
 2. `test_protonet_with_temperature_predicts[device]`: same with `use_temperature=True`. Accelerator case xfail `reason="#170: temperature buffer stays on CPU"`.
 3. `test_protonet_update_support[device]`: `model.update_support(x, y.float(), 0.5)` then predict. Passes today.
 4. `test_protonet_save_load_round_trip[device]`: save to `tmp_path`, `eq.load_equine_model(path)` (lands on the saved device), `EquineProtonet.load(path, device)`; predictions equal (`atol=1e-5, rtol=0`) to the original on the same input. Passes today.
-5. `test_stored_tensors_on_device[protonet|gp][device]`: `assert_on_device(model, device)` after training. Accelerator case xfail for BOTH classes `reason="#170: temperature registered after the module was moved"` (the Protonet's other tensors already land right; the GP case fails earlier on `compute_embeddings`; that is fine, one xfail reason per test).
+5. `test_stored_tensors_on_device[protonet|gp][device]`: `assert_on_device(model, device)` after training. Accelerator case xfail for BOTH classes `reason="#170: temperature registered after the module was moved"`. Measured: Protonet leaves `temperature` and the raw `support[label]` tensors on CPU; GP leaves `temperature` and `_Laplace.seen_data` on CPU (training itself works). PR-2b Tasks 3 and 4 fix all four.
 6. `test_gp_trains[device]`: train without `vis_support`, then `assert model.model.precision.device.type == torch.device(device).type`. Passes today.
 7. `test_gp_predicts[device]`: predict on CPU input. Accelerator xfail `reason="#177/#173: compute_embeddings does not move its input; cholesky_inverse has no MPS kernel"`.
 8. `test_gp_update_support[device]`: `update_support(x, y.long(), 10)`. Accelerator xfail (#177).
 9. `test_gp_vis_support_training[device]`: `train_model(..., vis_support=True, support_size=10)`. Accelerator xfail (#177).
 10. `test_gp_save_load_round_trip[device]`: save, `load_equine_model`, predict equal. Accelerator xfail (#177). Additionally `test_gp_load_onto_device[device]` marked `pytest.mark.skip(reason="#188: EquineGP.load(device=) is added in PR-2b")` for now.
-11. `test_predict_accepts_float64_input[protonet|gp][device]`: `model.predict(x[:5].double())`. CPU passes today (check!); MPS xfail `reason="MPS has no float64; PR-2b casts inputs to the model dtype"`. If the CPU case does NOT pass today for a class, report it: it means the dtype policy must also be defined for CPU and the plan needs a decision.
+11. `test_predict_accepts_float64_input[protonet|gp][device]`: `model.predict(x[:5].double())`. Fails today on EVERY device (CPU: dtype mismatch in the first Linear; MPS: no float64), so both cases are `xfail(strict=True, raises=(RuntimeError, TypeError), reason="#188: inputs are cast to the embedding dtype in PR-2b")`. Decision taken 2026-09-29: PR-2b casts inputs to the embedding's parameter dtype on every device (Task 5, Step 3); both marks come off together there.
 12. `test_device_attribute_is_a_string[protonet|gp]` (CPU only): `isinstance(model.device, str)`. GP case xfail `strict=True, raises=AssertionError, reason="#216: EquineGP.device is a torch.device"`.
 
 - [ ] **Step 2: Run on this machine** (`.venv/bin/python -m pytest tests/test_devices.py -q -p no:cacheprovider -rxXs`): every CPU case passes; the marked MPS cases show `xfailed`; nothing `xpassed`. If a case you marked passes, remove the mark (the fact table is what you verify against, not the roadmap). If a case you did not mark fails, report it with the traceback rather than marking it.
@@ -341,7 +343,7 @@ Layer exit: suite green; goldens untouched; push `stack2/pr-2d-mode-handling`.
 
 **Spec coverage (roadmap Phase 2):** PR-2a Tasks 1–2 (scaffold, parametrization, xfail only what fails today, GP `load(device)` skip). PR-2b Tasks 3–6 (temperature buffer then `.to`; GP passes `device` to super; `compute_embeddings`/`update_support` moves; four assigned `.to`; `Protonet.update_support` moves support; GP `load(device)` + `load_equine_model(device)`; `device` is `str` with deprecated `device_type`; MPS `cholesky_inverse` on CPU; MPS dtype policy = cast at the boundary, code fix preferred over the env var). The roadmap's optional "map the Protonet checkpoint to CPU and move only the module" is deliberately not done: the TorchScript path is transitional and removed next release. PR-2c Tasks 7–8 (`_forward_with_features`, `_forward_with_embeddings`, four Protonet callers, `no_grad` not `inference_mode`, GP `update_support` reuses embeddings). PR-2d Tasks 9–10 (wrapper `train()/eval()`, `predict` calls `eval()`, unconditional global moments, untrained `update_support`). Exit: MPS tests pass on the M1; goldens and fixtures untouched.
 
-**Deviations from the roadmap, from the 2026-09-29 facts:** #170 manifests as a crash in Protonet `predict` (not in training) plus wrong buffer placement on both classes; the GP has two independent MPS failures (input move, missing kernel) fixed in Tasks 4 and 5; float64 inputs need a stated policy (Task 5, Step 3) that the PR-2a CPU probe must confirm before implementation.
+**Deviations from the roadmap, from the 2026-09-29 facts:** #170 manifests as a crash in Protonet `predict` (not in training) plus wrong buffer placement on both classes (`temperature`; Protonet raw support; GP `seen_data`); the GP has two independent MPS failures (input move in `update_support`/`vis_support`, missing `cholesky_inverse` kernel in `predict`) fixed in Tasks 4 and 5; float64 inputs fail on every device today, and PR-2b casts them to the embedding dtype (Task 5, Step 3).
 
 **Placeholders:** none; every step names the functions and lines (approximate, from the 2026-09-29 survey; re-read before editing).
 
