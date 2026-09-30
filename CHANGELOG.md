@@ -10,9 +10,11 @@
   prediction is the same in either mode and a hand-written fine-tune loop can
   call `predict` between epochs; `EquineGP.predict` after `model.train()` no
   longer accumulates into the Laplace precision matrix (which used to raise
-  `Did not reset precision matrix at start of epoch`). A mixed wrapper/inner
-  mode (only reachable via `model.model.train()`) is flattened to the
-  wrapper's flag. `EquineGP.train_model` toggles training and eval mode on the
+  `Did not reset precision matrix at start of epoch`). Every submodule's mode
+  is restored individually, so an embedding frozen for fine-tuning
+  (`model.train(); model.embedding_model.eval()`, keeping BatchNorm statistics
+  and dropout fixed) is still frozen after the call, as is any other mix the
+  caller set. `EquineGP.train_model` toggles training and eval mode on the
   wrapper rather than only on the inner module, and both classes leave the
   model in eval mode afterwards. `Protonet.update_support` computes the global
   moments of the support embeddings whatever mode the caller left the model in

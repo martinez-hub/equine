@@ -964,9 +964,9 @@ class EquineGP(Equine):
         Computes in eval mode and leaves the model in the mode the caller had
         it in (via ``train()``/``eval()``): in training mode the inner Laplace
         layer accumulates every batch into its precision matrix, so a
-        prediction made after ``model.train()`` used to corrupt it (#209). A
-        mixed wrapper/inner mode (only reachable via ``model.model.train()``)
-        is flattened to the wrapper's flag.
+        prediction made after ``model.train()`` used to corrupt it (#209).
+        Every submodule's mode is restored, so an embedding frozen with
+        ``model.embedding_model.eval()`` during fine-tuning stays frozen.
 
         Parameters
         ----------

@@ -854,9 +854,9 @@ class EquineProtonet(Equine):
 
         Computes in eval mode and leaves the model in the mode the caller had
         it in (via ``train()``/``eval()``), so a prediction is the same
-        whatever mode the caller left the model in (#209). A mixed
-        wrapper/inner mode (only reachable via ``model.model.train()``) is
-        flattened to the wrapper's flag.
+        whatever mode the caller left the model in (#209). Every submodule's
+        mode is restored, so an embedding frozen with
+        ``model.embedding_model.eval()`` during fine-tuning stays frozen.
 
         Parameters
         ----------
@@ -902,9 +902,9 @@ class EquineProtonet(Equine):
         quantities: this computes in eval mode and leaves the model in the
         mode the caller had it in (via ``train()``/``eval()``), which makes it
         usable on a freshly constructed model, which ``torch.nn.Module``
-        leaves in training mode (#179). A mixed wrapper/inner mode (only
-        reachable via ``model.model.train()``) is flattened to the wrapper's
-        flag.
+        leaves in training mode (#179). Every submodule's mode is restored, so
+        an embedding frozen with ``model.embedding_model.eval()`` during
+        fine-tuning stays frozen.
 
         Parameters
         ----------

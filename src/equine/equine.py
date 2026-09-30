@@ -16,20 +16,23 @@ from .equine_output import EquineOutput
 
 @contextlib.contextmanager
 def _eval_mode(module: torch.nn.Module):
-    """Run the body with ``module`` in eval mode, then restore its previous mode.
+    """Run the body with ``module`` in eval mode, then restore every submodule's mode.
 
     The inference entry points (``predict``, ``update_support``) compute
     eval-mode quantities but must not change the mode the caller left the
-    model in (#209, #179). ``module.train(was_training)`` propagates to the
-    submodules, so a mixed wrapper/inner mode (only reachable through
-    ``model.model.train()``) is flattened to the wrapper's flag.
+    model in (#209, #179). The mode of every submodule is recorded and put
+    back individually (``m.training = ...``, which does not propagate), so a
+    frozen embedding (``model.train(); model.embedding_model.eval()`` to keep
+    BatchNorm statistics and dropout fixed while the head trains) is still
+    frozen afterwards, and so is any other mix the caller set.
     """
-    was_training = module.training
+    modes = {m: m.training for m in module.modules()}
     module.eval()
     try:
         yield
     finally:
-        module.train(was_training)
+        for m, training in modes.items():
+            m.training = training
 
 
 # A type variable for Equine objects

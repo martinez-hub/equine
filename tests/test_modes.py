@@ -11,11 +11,18 @@ mode so that a freshly constructed (training-mode) model can be given a
 support set (#179). ``train_model`` must leave the wrapper and the inner
 module in the same (eval) mode. CPU only, seeded, short training like
 ``tests/test_inference.py``.
+
+The models are built on ``conftest.RecordingEmbedding`` (a dropout plus a
+record of the mode each forward ran in), so "computes in eval mode" is
+asserted directly: every forward an entry point makes reports eval mode, and
+its result equals the one computed after ``model.eval()``. With a
+mode-insensitive embedding these tests would pass with ``_eval_mode`` removed
+from the entry points.
 """
 
 import pytest
 import torch
-from conftest import BasicEmbeddingModel, assert_valid_prediction
+from conftest import BasicEmbeddingModel, RecordingEmbedding, assert_valid_prediction
 from golden_data import CLASSES, FEATURES, separable_dataset
 
 import equine as eq
@@ -25,7 +32,7 @@ def _protonet():
     torch.manual_seed(0)
     dataset, x, y = separable_dataset()
     model = eq.EquineProtonet(
-        BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, use_temperature=True
+        RecordingEmbedding(FEATURES, CLASSES), CLASSES, use_temperature=True
     )
     model.train_model(
         dataset,
@@ -42,7 +49,7 @@ def _gp():
     torch.manual_seed(0)
     dataset, x, y = separable_dataset()
     model = eq.EquineGP(
-        BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
+        RecordingEmbedding(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
     )
     model.train_model(
         dataset,
@@ -52,6 +59,18 @@ def _gp():
         batch_size=32,
     )
     return model, x, y
+
+
+def _assert_same_output(actual: eq.EquineOutput, expected: eq.EquineOutput) -> None:
+    torch.testing.assert_close(actual.classes, expected.classes)
+    torch.testing.assert_close(actual.ood_scores, expected.ood_scores)
+    torch.testing.assert_close(actual.embeddings, expected.embeddings)
+
+
+def _ran_in_eval_mode(embedding: RecordingEmbedding) -> None:
+    """Every embedding forward since ``modes`` was cleared saw eval mode."""
+    assert embedding.modes, "the entry point did not embed anything"
+    assert not any(embedding.modes), embedding.modes
 
 
 _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", "gp"])
@@ -134,17 +153,36 @@ def test_predict_restores_callers_mode(build, training):
     the mode the caller had them in (#209)."""
     model, x, _ = build()
     _set_mode(model, training)
-    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+    model.embedding_model.modes.clear()
+    out = model.predict(x[:5])
+    _ran_in_eval_mode(model.embedding_model)
     _assert_mode(model, training)
+    assert_valid_prediction(out, 5, CLASSES)
+    model.eval()
+    _assert_same_output(out, model.predict(x[:5]))
 
 
 @_MODES
 def test_protonet_update_support_restores_callers_mode(training):
+    """update_support() computes the support covariance, the moments and the
+    OOD calibration in eval mode (PRED_COV_TYPE, not the training cov_type),
+    whatever mode the caller is in, and restores that mode (#179)."""
     model, x, y = _protonet()
     _set_mode(model, training)
+    model.embedding_model.modes.clear()
+    torch.manual_seed(1)  # the calibration split and support draw
     model.update_support(x, y.float(), 0.5)
+    _ran_in_eval_mode(model.embedding_model)
     _assert_mode(model, training)
-    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+    covariance = model.model.covariance.clone()
+    out = model.predict(x[:5])
+    assert_valid_prediction(out, 5, CLASSES)
+
+    model.eval()
+    torch.manual_seed(1)
+    model.update_support(x, y.float(), 0.5)
+    assert torch.equal(model.model.covariance, covariance)
+    _assert_same_output(out, model.predict(x[:5]))
 
 
 @_MODES
@@ -153,11 +191,116 @@ def test_gp_update_support_restores_callers_mode(training):
     _set_mode(model, training)
     precision = model.model.precision.clone()
     seen_data = model.model.seen_data.clone()
+    model.embedding_model.modes.clear()
+    torch.manual_seed(1)  # the support draw
     model.update_support(x, y.long(), 10)
+    _ran_in_eval_mode(model.embedding_model)
     _assert_mode(model, training)
     torch.testing.assert_close(model.model.precision, precision, atol=0, rtol=0)
     torch.testing.assert_close(model.model.seen_data, seen_data, atol=0, rtol=0)
-    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+    prototypes = model.prototypes.clone()
+    out = model.predict(x[:5])
+    assert_valid_prediction(out, 5, CLASSES)
+
+    model.eval()
+    torch.manual_seed(1)
+    model.update_support(x, y.long(), 10)
+    torch.testing.assert_close(model.prototypes, prototypes)
+    _assert_same_output(out, model.predict(x[:5]))
+
+
+def _predict(model, x, y):
+    model.predict(x[:5])
+
+
+def _update_support(model, x, y):
+    if isinstance(model, eq.EquineProtonet):
+        model.update_support(x, y.float(), 0.5)
+    else:
+        model.update_support(x, y.long(), 10)
+
+
+@pytest.mark.parametrize(
+    "entry_point", [_predict, _update_support], ids=["predict", "update_support"]
+)
+@_MODES
+@_BUILDERS
+def test_mode_restored_when_the_entry_point_raises(build, training, entry_point):
+    """An exception inside predict/update_support still leaves the caller's mode in place."""
+    model, x, y = build()
+    _set_mode(model, training)
+    model.embedding_model.fail_next = True
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        entry_point(model, x, y)
+    _assert_mode(model, training)
+    assert model.embedding_model.training is training
+
+
+def _batchnorm_embedding() -> torch.nn.Sequential:
+    return torch.nn.Sequential(
+        torch.nn.Linear(FEATURES, 16),
+        torch.nn.BatchNorm1d(16),
+        torch.nn.ReLU(),
+        torch.nn.Linear(16, CLASSES),
+    )
+
+
+def _protonet_with_batchnorm():
+    torch.manual_seed(0)
+    dataset, x, y = separable_dataset()
+    model = eq.EquineProtonet(_batchnorm_embedding(), CLASSES)
+    model.train_model(
+        dataset, num_episodes=5, calib_frac=0.2, support_size=10, way=3, episode_size=30
+    )
+    return model, x, y
+
+
+def _gp_with_batchnorm():
+    torch.manual_seed(0)
+    dataset, x, y = separable_dataset()
+    model = eq.EquineGP(
+        _batchnorm_embedding(), CLASSES, CLASSES, num_random_features=16
+    )
+    model.train_model(
+        dataset,
+        torch.nn.CrossEntropyLoss(),
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=2,
+        batch_size=32,
+    )
+    return model, x, y
+
+
+@pytest.mark.parametrize(
+    "entry_point", [_predict, _update_support], ids=["predict", "update_support"]
+)
+@pytest.mark.parametrize(
+    "build", [_protonet_with_batchnorm, _gp_with_batchnorm], ids=["protonet", "gp"]
+)
+def test_frozen_embedding_stays_frozen(build, entry_point):
+    """The frozen-backbone fine-tune idiom survives an inference call in between.
+
+    ``model.train(); model.embedding_model.eval()`` keeps BatchNorm statistics
+    (and dropout) fixed while the head trains. predict/update_support must
+    restore every submodule's own mode, not re-propagate the wrapper's: the
+    embedding stays in eval mode and its running statistics are untouched.
+    """
+    model, x, y = build()
+    bn = model.embedding_model[1]
+    model.train()
+    model.embedding_model.eval()
+    running_mean = bn.running_mean.clone()
+    entry_point(model, x, y)
+    assert model.training is True
+    assert model.embedding_model.training is False
+    assert bn.training is False
+    torch.testing.assert_close(bn.running_mean, running_mean, atol=0, rtol=0)
+    # and the reverse mix is kept too
+    model.eval()
+    model.embedding_model.train()
+    entry_point(model, x, y)
+    assert model.training is False
+    assert model.embedding_model.training is True
 
 
 def test_gp_manual_fine_tune_loop_with_predict_per_epoch():
