@@ -983,11 +983,6 @@ class EquineGP(Equine):
             If the file cannot be loaded safely, names an unregistered
             architecture, or contains executable content without trust.
         """
-        if device is not None:
-            # A device this machine cannot build on ('meta', or an absent
-            # accelerator) would fail inside load_checkpoint with an opaque
-            # error; refuse it up front with the settings['device'] message.
-            _require_device({"device": device})
         # map_location so internal tensors map to the correct device
         model_save = load_checkpoint(
             path,

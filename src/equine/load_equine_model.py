@@ -11,7 +11,7 @@ from .equine import Equine
 from .equine_gp import EquineGP
 from .equine_protonet import EquineProtonet
 from .registry import _truncate
-from .utils import _require_device, load_checkpoint
+from .utils import load_checkpoint
 
 
 def load_equine_model(
@@ -66,11 +66,6 @@ def load_equine_model(
     Files saved with ``allow_executable=True`` embed a TorchScript module, which
     is executable code, and need ``trust_executable=True``.
     """
-    if device is not None:
-        # A device this machine cannot build on ('meta', or an absent
-        # accelerator) would fail inside load_checkpoint with an opaque error;
-        # refuse it up front with the settings['device'] message.
-        _require_device({"device": device})
     model_save = load_checkpoint(
         model_path,
         map_location=device,

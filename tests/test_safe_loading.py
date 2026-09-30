@@ -458,6 +458,9 @@ def test_legacy_path_loads_onto_the_cpu_unless_mapped(tmp_path, monkeypatch) -> 
         return real_load(*args, **{**kwargs, "map_location": "cpu"})
 
     monkeypatch.setattr(torch, "load", spy)
+    # "cuda:1" exists on no test machine; this test is about what reaches
+    # torch.load, so the up-front device validation is switched off.
+    monkeypatch.setattr(equine.utils, "_require_device", lambda *a, **k: None)
     with pytest.warns(UserWarning, match="unsafe"):
         load_checkpoint(path, allow_unsafe_legacy_format=True)
     with pytest.warns(UserWarning, match="unsafe"):

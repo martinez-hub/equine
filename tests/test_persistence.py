@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
+from beartype.roar import BeartypeCallHintParamViolation
 from conftest import BasicEmbeddingModel, _rewrite_zip, available_devices
 
 import equine as eq
@@ -214,16 +215,29 @@ def test_generic_loader_takes_a_device_for_a_gp_file(tmp_path) -> None:
 
 @pytest.mark.parametrize("train, cls", TRAINERS)
 def test_requested_meta_device_is_refused(tmp_path, train, cls) -> None:
-    """An explicit device= goes through _require_device before the file is read."""
+    """An explicit device= is validated in load_checkpoint, before the file is
+    read, so every loader refuses 'meta' the same way."""
     model, _ = train(BasicEmbeddingModel(6, 3))
     path = str(tmp_path / "m.eq")
     model.save(path)
-    loaders = [eq.load_equine_model]
-    if cls is eq.EquineGP:
-        loaders.append(cls.load)
-    for loader in loaders:
-        with pytest.raises(ValueError, match="'meta', which holds no data"):
+    for loader in (cls.load, eq.load_equine_model):
+        with pytest.raises(
+            ValueError, match="The requested device is 'meta', which holds no data"
+        ):
             loader(path, device="meta")
+
+
+@pytest.mark.parametrize("train, cls", TRAINERS)
+@pytest.mark.skipif(torch.cuda.is_available(), reason="cuda is available here")
+def test_requested_unavailable_device_is_refused(tmp_path, train, cls) -> None:
+    model, _ = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    for loader in (cls.load, eq.load_equine_model):
+        with pytest.raises(
+            ValueError, match="The requested device .* is not available on this machine"
+        ):
+            loader(path, device="cuda")
 
 
 _ACCELERATOR = next((d for d in available_devices() if d != "cpu"), None)
@@ -260,11 +274,19 @@ def test_save_and_load_flags_are_keyword_only(tmp_path, train, cls) -> None:
     with pytest.raises(TypeError):
         model.save(path, True)  # type: ignore[misc]
     model.save(path)
-    # device is the one positional argument after the path on every loader
+    # device is the one positional argument after the path on every loader;
+    # a third positional hits the keyword-only flags.
     with pytest.raises(TypeError):
         cls.load(path, None, True)  # type: ignore[misc]
     with pytest.raises(TypeError):
         eq.load_equine_model(path, None, True)  # type: ignore[misc]
+    # A positional True lands in the device slot and is refused too: by
+    # beartype on the class loaders; load_equine_model is not beartype-checked,
+    # so load_checkpoint's device validation raises the ValueError instead.
+    with pytest.raises(BeartypeCallHintParamViolation):
+        cls.load(path, True)  # type: ignore[misc]
+    with pytest.raises(ValueError, match="not a torch device name"):
+        eq.load_equine_model(path, True)  # type: ignore[misc]
 
 
 # --- transition bridge -------------------------------------------------------------

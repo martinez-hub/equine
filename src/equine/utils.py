@@ -199,7 +199,9 @@ def load_checkpoint(
         Device to move the loaded tensors to. Tensors are loaded on the CPU
         (memory-mapped on the safe path) and then moved to ``map_location`` if
         it is given; with None they stay on the CPU, whatever device they were
-        saved from. Both the safe and the legacy path follow this.
+        saved from. Both the safe and the legacy path follow this. It must
+        name the CPU or an accelerator available on this machine (``meta``
+        holds no data); anything else is refused before the file is opened.
     allow_unsafe_legacy_format : bool, optional
         If the safe load fails, fall back to ``weights_only=False`` with a
         ``UserWarning``. This can execute arbitrary code embedded in the file,
@@ -222,7 +224,8 @@ def load_checkpoint(
     Raises
     ------
     ValueError
-        If the file cannot be loaded safely and ``allow_unsafe_legacy_format``
+        If ``map_location`` names a device this machine cannot build on. If
+        the file cannot be loaded safely and ``allow_unsafe_legacy_format``
         is False (restricted unpickling refuses it, torch < 2.6 is installed,
         it is not a zip archive, or its support/KDE tensors alias one
         another). Whatever the flag: if it is a zip archive with compressed
@@ -230,6 +233,10 @@ def load_checkpoint(
         contains a set, or if a tensor's storage is smaller than its shape
         or claims more data than the file holds.
     """
+    if map_location is not None:
+        # 'meta' or an absent accelerator would otherwise fail deep inside the
+        # load with an opaque error; every loader passes its device= here.
+        _require_device({"device": map_location}, what="The requested device")
     old_torch = _torch_version() < _MIN_SAFE_TORCH
     if old_torch and not allow_unsafe_legacy_format:
         raise ValueError(_OLD_TORCH_ERROR.format(version=torch.__version__))
@@ -758,13 +765,19 @@ def _shown(value: Any) -> str:
     return f"a {type(value).__name__}"
 
 
-def _require_device(settings: dict[str, Any], hint: str = "") -> None:
+def _require_device(
+    settings: dict[str, Any],
+    hint: str = "",
+    what: str = "Model file's settings['device']",
+) -> None:
     """
     Refuse a file's ``settings["device"]`` unless this machine can build on it.
 
     It must name a torch device that is the CPU or an accelerator available
     here; ``meta`` (no data) is refused. ``hint`` is appended to the message
-    for an unavailable device.
+    for an unavailable device. ``what`` opens every message and names the
+    value being checked (``load_checkpoint`` passes "The requested device"
+    for a caller's ``map_location``).
     """
     if "device" not in settings:
         return
@@ -775,16 +788,12 @@ def _require_device(settings: dict[str, Any], hint: str = "") -> None:
         device = torch.device(value)
     except (TypeError, ValueError, RuntimeError) as err:
         raise ValueError(
-            f"Model file's settings['device'] is not a torch device name "
-            f"({_shown(value)})."
+            f"{what} is not a torch device name ({_shown(value)})."
         ) from err
     if device.type == "cpu":
         return
     if device.type == "meta":
-        raise ValueError(
-            "Model file's settings['device'] is 'meta', which holds no data; "
-            "refusing to load."
-        )
+        raise ValueError(f"{what} is 'meta', which holds no data; refusing to load.")
     try:
         is_available = getattr(torch.get_device_module(device.type), "is_available")
         available = bool(is_available())
@@ -792,8 +801,7 @@ def _require_device(settings: dict[str, Any], hint: str = "") -> None:
         available = False
     if not available:
         raise ValueError(
-            f"Model file's settings['device'] ({_shown(value)}) is not available on "
-            f"this machine{hint}."
+            f"{what} ({_shown(value)}) is not available on this machine{hint}."
         )
 
 
