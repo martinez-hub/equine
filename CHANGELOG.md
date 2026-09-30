@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Changed
+- **Device handling** (#170, #177, #206, #216, #188). Both model classes now
+  keep every tensor they own on their `device`: the `temperature` buffer, the
+  support set, the GP's Laplace `seen_data` counter and the covariances it
+  allocates. Inputs are moved to the model device and, when floating point,
+  cast to the embedding model's parameter dtype (float64 inputs used to raise;
+  integer inputs, e.g. embedding indices, keep their dtype). `EquineGP.device`
+  is a `str` like `EquineProtonet.device`; `EquineGP.device_type` is deprecated
+  and removed in the next release. `EquineGP.load` and `load_equine_model`
+  accept `device=` (positional second argument) like `EquineProtonet.load`;
+  an explicit device is checked before the file is read, and `meta` or an
+  unavailable device raises `ValueError`. On MPS, which has no
+  `cholesky_inverse` kernel, the GP covariance is computed through a CPU round
+  trip; CPU and CUDA results are unchanged. Files saved after training on an
+  accelerator hold accelerator tensors; pass `device="cpu"` when loading them
+  on a machine without one.
 - **Model files no longer embed executable code by default** (#191). `save()`
   stores the embedding model as a recipe (the name of a registered architecture
   plus its constructor arguments) and a `state_dict`. Register your embedding
