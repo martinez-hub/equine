@@ -857,7 +857,10 @@ class EquineProtonet(Equine):
         Returns
         -------
         EquineOutput
-            Output object containing prediction probabilities and OOD scores.
+            Output object containing prediction probabilities, OOD scores and
+            embeddings. Computed under ``torch.no_grad()``: the tensors carry
+            no autograd graph but are ordinary tensors (not inference-mode
+            tensors), so a caller can still use them in autograd.
         """
         # One embedding pass and no autograd graph (#173, #182). no_grad, not
         # inference_mode: the outputs stay ordinary tensors a caller can feed

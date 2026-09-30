@@ -11,6 +11,9 @@ the Protonet, the calibration set once. CPU only, seeded, short training
 like ``tests/test_devices.py``.
 """
 
+from collections import OrderedDict
+
+import icontract
 import pytest
 import torch
 from conftest import CountingEmbedding
@@ -92,3 +95,43 @@ def test_protonet_update_support_embeds_calibration_set_once():
     emb.calls = 0
     model.update_support(x, y.float(), 0.5)
     assert emb.calls == 1 + CLASSES
+
+
+def test_gp_untrained_forward_and_predict_violate_precondition():
+    """The training-parameters precondition guards the single-pass helper, so
+    neither entry point computes anything or touches the Laplace buffers."""
+    torch.manual_seed(0)
+    _, x, _ = separable_dataset()
+    model = eq.EquineGP(CountingEmbedding(FEATURES, CLASSES), CLASSES, CLASSES)
+    precision = model.model.precision.clone()
+    seen_data = model.model.seen_data.clone()
+    with pytest.raises(icontract.ViolationError):
+        model.forward(x[:5])
+    with pytest.raises(icontract.ViolationError):
+        model.predict(x[:5])
+    torch.testing.assert_close(model.model.precision, precision, atol=0, rtol=0)
+    torch.testing.assert_close(model.model.seen_data, seen_data, atol=0, rtol=0)
+
+
+def test_gp_compute_prototypes_reembeds_and_reflects_changed_support():
+    """Public compute_prototypes keeps its base semantics: it embeds the
+    support again (one pass per class) and reflects whatever the support is."""
+    model, emb, x, y = _gp()
+    model.update_support(x, y.long(), 10)
+    emb.calls = 0
+    first = model.compute_prototypes()
+    assert emb.calls == CLASSES
+    torch.testing.assert_close(first, model.prototypes)
+
+    shifted = OrderedDict(
+        (label, support + 1.0) for label, support in model.support.items()
+    )
+    model.support = shifted
+    second = model.compute_prototypes()
+    assert emb.calls == 2 * CLASSES
+    assert not torch.allclose(first, second)
+    expected = torch.stack(
+        [model.compute_embeddings(s).mean(dim=0) for s in shifted.values()]
+    )
+    torch.testing.assert_close(second, expected)
+    assert list(model.support_embeddings) == list(shifted)
