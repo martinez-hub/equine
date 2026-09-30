@@ -75,11 +75,17 @@ def test_predict_outputs_carry_no_autograd(build):
 
 @_BUILDERS
 def test_predict_outputs_are_plain_tensors_usable_in_autograd(build):
-    """Guards against ``torch.inference_mode()``: its tensors cannot enter autograd."""
+    """Guards against ``torch.inference_mode()``: its tensors cannot enter autograd.
+
+    Every output is used as ``predict`` returns it; a clone would turn an
+    inference tensor back into an ordinary one and hide the regression.
+    """
     model, _, x, _ = build()
     out = model.predict(x[:5])
-    leaf = out.embeddings.clone().requires_grad_()
-    (leaf * 2).sum().backward()
+    for t in (out.classes, out.ood_scores, out.embeddings):
+        assert not t.is_inference()
+        w = torch.ones((), requires_grad=True)
+        (t * w).sum().backward()  # inference tensors cannot be saved for backward
 
 
 def test_gp_update_support_embeds_once_per_class():
