@@ -936,6 +936,7 @@ class EquineGP(Equine):
     def load(
         cls,
         path: str,
+        device: Optional[str] = None,
         *,
         allow_unsafe_legacy_format: bool = False,
         trust_executable: bool = False,
@@ -952,6 +953,9 @@ class EquineGP(Equine):
         ----------
         path : str
             Input filename.
+        device : Optional[str]
+            The device to load the model onto. Overrides the device recorded
+            in the file; by default the model lands on the saved device.
         allow_unsafe_legacy_format : bool, optional
             Keyword-only. Permit loading a file written in the legacy pickle
             format. This uses unrestricted unpickling and can execute code
@@ -979,8 +983,15 @@ class EquineGP(Equine):
             If the file cannot be loaded safely, names an unregistered
             architecture, or contains executable content without trust.
         """
+        if device is not None:
+            # A device this machine cannot build on ('meta', or an absent
+            # accelerator) would fail inside load_checkpoint with an opaque
+            # error; refuse it up front with the settings['device'] message.
+            _require_device({"device": device})
+        # map_location so internal tensors map to the correct device
         model_save = load_checkpoint(
             path,
+            map_location=device,
             allow_unsafe_legacy_format=allow_unsafe_legacy_format,
             # Skip the beartype wrapper around this classmethod. Under
             # `python -O`, beartype decorators become a no-op (identity)
@@ -990,6 +1001,7 @@ class EquineGP(Equine):
         )
         return cls._from_checkpoint(
             model_save,
+            device,
             trust_executable=trust_executable,
             embedding_model=embedding_model,
             allow_unsafe_legacy_format=allow_unsafe_legacy_format,
@@ -1002,6 +1014,7 @@ class EquineGP(Equine):
     def _from_checkpoint(
         cls,
         model_save: dict[str, Any],
+        device: Optional[str] = None,
         trust_executable: bool = False,
         embedding_model: Optional[torch.nn.Module] = None,
         allow_unsafe_legacy_format: bool = False,
@@ -1014,6 +1027,8 @@ class EquineGP(Equine):
         ----------
         model_save : dict[str, Any]
             The dictionary returned by ``utils.load_checkpoint``.
+        device : Optional[str]
+            Device override for the reconstituted model.
         trust_executable : bool, optional
             Permit running an embedded TorchScript module. Defaults to False.
         embedding_model : Optional[torch.nn.Module]
@@ -1032,13 +1047,11 @@ class EquineGP(Equine):
         EquineGP
             The reconstituted EquineGP object.
         """
-        # No device override yet (EquineGP.load gains `device` in Phase 2): the
-        # model is built on the device recorded in its settings. The embedding
-        # first: it is the single audit point for executable content, so a file
-        # that needs trust says so whatever else it lacks.
+        # The embedding first: it is the single audit point for executable
+        # content, so a file that needs trust says so whatever else it lacks.
         embedding = _rebuild_embedding(
             model_save,
-            None,
+            device,
             trust_executable or allow_unsafe_legacy_format,
             embedding_model,
             _stacklevel=_stacklevel + 1,
@@ -1066,7 +1079,11 @@ class EquineGP(Equine):
             settings = {k: v for k, v in settings.items() if k != "use_temperature"}
             warnings.warn(_USE_TEMPERATURE_WARNING, UserWarning, stacklevel=_stacklevel)
         settings = _checked_settings(cls, settings)
-        _require_device(settings)
+        # Allow the user to override the saved device state dynamically
+        if device is not None:
+            settings["device"] = device
+        else:
+            _require_device(settings, hint=" (pass device= to choose another)")
         # _Laplace allocates buffers sized by the settings (quadratic in
         # num_random_features and emb_out_dim), so the stored head weights must
         # match them before anything is constructed.
@@ -1101,9 +1118,10 @@ class EquineGP(Equine):
         )
         eq_model.eval()
 
-        # load_checkpoint returns CPU tensors (no map_location here), while the
-        # model is on settings["device"]. compute_prototypes embeds the support
-        # with the model, so the support goes there, as update_support needed it.
+        # Without a device override load_checkpoint returns CPU tensors while
+        # the model is on settings["device"]. compute_prototypes embeds the
+        # support with the model, so the support goes there, as update_support
+        # needed it.
         try:
             support = OrderedDict(
                 (label, x.to(eq_model.device)) for label, x in stored_support.items()

@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
-from conftest import BasicEmbeddingModel, _rewrite_zip
+from conftest import BasicEmbeddingModel, _rewrite_zip, available_devices
 
 import equine as eq
 import equine.equine_gp
@@ -201,6 +201,56 @@ def test_protonet_load_onto_an_explicit_device_round_trips(tmp_path) -> None:
     assert_same(model, reloaded, X)
 
 
+def test_generic_loader_takes_a_device_for_a_gp_file(tmp_path) -> None:
+    model, X = train_gp(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    reloaded = eq.load_equine_model(path, device="cpu")
+    assert isinstance(reloaded, eq.EquineGP)
+    assert reloaded.device == "cpu"
+    assert {p.device.type for p in reloaded.embedding_model.parameters()} == {"cpu"}
+    assert_same(model, reloaded, X)
+
+
+@pytest.mark.parametrize("train, cls", TRAINERS)
+def test_requested_meta_device_is_refused(tmp_path, train, cls) -> None:
+    """An explicit device= goes through _require_device before the file is read."""
+    model, _ = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    loaders = [eq.load_equine_model]
+    if cls is eq.EquineGP:
+        loaders.append(cls.load)
+    for loader in loaders:
+        with pytest.raises(ValueError, match="'meta', which holds no data"):
+            loader(path, device="meta")
+
+
+_ACCELERATOR = next((d for d in available_devices() if d != "cpu"), None)
+
+
+@pytest.mark.accelerator
+@pytest.mark.skipif(_ACCELERATOR is None, reason="needs a CUDA or MPS device")
+def test_gp_saved_on_the_accelerator_loads_onto_cpu(tmp_path) -> None:
+    model, X = train_gp(BasicEmbeddingModel(6, 3), device=_ACCELERATOR)
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    expected = model.predict(X[:8])
+    for loaded in (
+        eq.EquineGP.load(path, device="cpu"),
+        eq.load_equine_model(path, device="cpu"),
+    ):
+        assert loaded.device == "cpu"
+        assert {t.device.type for t in loaded.state_dict().values()} == {"cpu"}
+        actual = loaded.predict(X[:8])
+        torch.testing.assert_close(
+            actual.classes, expected.classes.cpu(), atol=1e-4, rtol=0
+        )
+        torch.testing.assert_close(
+            actual.ood_scores, expected.ood_scores.cpu(), atol=1e-4, rtol=0
+        )
+
+
 @pytest.mark.parametrize("train, cls", TRAINERS)
 def test_save_and_load_flags_are_keyword_only(tmp_path, train, cls) -> None:
     """A positional True must not silently mean allow_executable,
@@ -210,11 +260,11 @@ def test_save_and_load_flags_are_keyword_only(tmp_path, train, cls) -> None:
     with pytest.raises(TypeError):
         model.save(path, True)  # type: ignore[misc]
     model.save(path)
-    positional = (path, None, True) if cls is eq.EquineProtonet else (path, True)
+    # device is the one positional argument after the path on every loader
     with pytest.raises(TypeError):
-        cls.load(*positional)  # type: ignore[misc]
+        cls.load(path, None, True)  # type: ignore[misc]
     with pytest.raises(TypeError):
-        eq.load_equine_model(path, True)  # type: ignore[misc]
+        eq.load_equine_model(path, None, True)  # type: ignore[misc]
 
 
 # --- transition bridge -------------------------------------------------------------

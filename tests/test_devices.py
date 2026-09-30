@@ -194,7 +194,6 @@ def test_gp_save_load_round_trip(device, tmp_path):
     _assert_same_predictions(before, generic.predict(x[:5]))
 
 
-@pytest.mark.skip(reason="#188: EquineGP.load(device=) is added in PR-2b")
 @pytest.mark.parametrize("device", devices())
 def test_gp_load_onto_device(device, tmp_path):
     model, x, _ = _gp("cpu")
@@ -203,8 +202,14 @@ def test_gp_load_onto_device(device, tmp_path):
     model.save(path)
 
     loaded = eq.EquineGP.load(path, device)
+    assert loaded.device == device
     assert_on_device(loaded, device)
     _assert_same_predictions(before, loaded.predict(x[:5]))
+
+    generic = eq.load_equine_model(path, device=device)
+    assert generic.device == device
+    assert_on_device(generic, device)
+    _assert_same_predictions(before, generic.predict(x[:5]))
 
 
 # --- input dtype --------------------------------------------------------------

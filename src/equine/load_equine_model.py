@@ -11,11 +11,12 @@ from .equine import Equine
 from .equine_gp import EquineGP
 from .equine_protonet import EquineProtonet
 from .registry import _truncate
-from .utils import load_checkpoint
+from .utils import _require_device, load_checkpoint
 
 
 def load_equine_model(
     model_path: str,
+    device: Optional[str] = None,
     *,
     allow_unsafe_legacy_format: bool = False,
     trust_executable: bool = False,
@@ -28,6 +29,9 @@ def load_equine_model(
     ----------
     model_path : str
         The path to the model file
+    device : Optional[str]
+        The device to load the model onto. Overrides the device recorded in
+        the file; by default the model lands on the saved device.
     allow_unsafe_legacy_format : bool, optional
         Keyword-only. Permit loading a file written in the legacy pickle
         format. This uses unrestricted unpickling and can execute code embedded
@@ -62,8 +66,15 @@ def load_equine_model(
     Files saved with ``allow_executable=True`` embed a TorchScript module, which
     is executable code, and need ``trust_executable=True``.
     """
+    if device is not None:
+        # A device this machine cannot build on ('meta', or an absent
+        # accelerator) would fail inside load_checkpoint with an opaque error;
+        # refuse it up front with the settings['device'] message.
+        _require_device({"device": device})
     model_save = load_checkpoint(
-        model_path, allow_unsafe_legacy_format=allow_unsafe_legacy_format
+        model_path,
+        map_location=device,
+        allow_unsafe_legacy_format=allow_unsafe_legacy_format,
     )
     summary = model_save.get("train_summary")
     model_type = summary.get("modelType") if isinstance(summary, dict) else None
@@ -80,6 +91,7 @@ def load_equine_model(
         raise ValueError(f"Unknown model type {_truncate(repr(model_type), 80)}")
     return classes[model_type]._from_checkpoint(
         model_save,
+        device,
         trust_executable=trust_executable,
         embedding_model=embedding_model,
         allow_unsafe_legacy_format=allow_unsafe_legacy_format,
