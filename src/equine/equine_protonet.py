@@ -449,7 +449,12 @@ class Protonet(torch.nn.Module):
 
         return classes, distances, X_embed
 
-    def update_support(self, support: OrderedDict[int, torch.Tensor]) -> None:
+    def update_support(
+        self,
+        support: OrderedDict[int, torch.Tensor],
+        *,
+        _global_moments: bool = True,
+    ) -> None:
         """
         Method to update the support examples, and all the calculations that rely on them.
 
@@ -462,6 +467,10 @@ class Protonet(torch.nn.Module):
         ----------
         support : OrderedDict
             Ordered dict containing class labels and their associated support examples.
+        _global_moments : bool, optional
+            Private, keyword-only. False skips the global moments; only the
+            episode loop of ``EquineProtonet.train_model`` passes it, since
+            nothing reads them before its final full-support update.
         """
         # Through the model boundary: on the device and, for floating support,
         # in the embedding's dtype (so a float32 model on MPS accepts float64).
@@ -479,7 +488,8 @@ class Protonet(torch.nn.Module):
         )
 
         self.prototypes: torch.Tensor = self.compute_prototypes()
-        self.compute_global_moments()
+        if _global_moments:
+            self.compute_global_moments()
 
         if self.training is False:
             self.covariance: torch.Tensor = self.compute_covariance(
@@ -681,7 +691,9 @@ class EquineProtonet(Equine):
             support, episode_x, episode_y = generate_episode(
                 train_x, train_y, support_size, way, episode_size
             )
-            self.model.update_support(support)
+            # Episodes read only the prototypes and the covariance; the
+            # global moments are computed by the full-support update below.
+            self.model.update_support(support, _global_moments=False)
 
             _, dists = self.model(episode_x)
             loss_value = loss_fn(

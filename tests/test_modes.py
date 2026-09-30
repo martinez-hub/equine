@@ -95,9 +95,9 @@ def test_protonet_update_support_on_untrained_model():
 def test_protonet_update_support_in_train_mode_computes_global_moments():
     """The inner Protonet recomputes the global moments in training mode too (#179).
 
-    ``EquineProtonet.train_model`` calls the inner ``update_support`` once per
-    episode in training mode; the moments must track the support in that mode
-    as well, not only in eval mode.
+    A direct call to the inner ``update_support`` must leave the moments
+    tracking the support in either mode, not only in eval mode. (Only the
+    episode loop of ``train_model`` opts out, see the next test.)
     """
     model, x, y = _protonet()
     stale_mean = model.model.global_mean.clone()
@@ -113,6 +113,26 @@ def test_protonet_update_support_in_train_mode_computes_global_moments():
     assert not torch.equal(model.model.global_covariance, stale_cov)
     assert torch.isfinite(model.model.global_covariance).all()
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
+def test_protonet_train_model_computes_global_moments_once(monkeypatch):
+    """The episode loop skips the global moments; nothing reads them there.
+
+    Episodes need only the prototypes and the covariance. The moments feed
+    the OOD calibration, so the final full-support update of ``train_model``
+    (in eval mode) is the one call that computes them.
+    """
+    real = eq.equine_protonet.Protonet.compute_global_moments
+    modes: list[bool] = []
+
+    def counting(self):
+        modes.append(self.training)
+        return real(self)
+
+    monkeypatch.setattr(eq.equine_protonet.Protonet, "compute_global_moments", counting)
+    model, _, _ = _protonet()  # 5 episodes
+    assert modes == [False]
+    assert model.model.global_mean.shape == (CLASSES,)
 
 
 def test_gp_predict_after_train_mode_does_not_touch_precision():
