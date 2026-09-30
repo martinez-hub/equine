@@ -28,29 +28,26 @@ import equine as eq
 
 pytestmark = pytest.mark.device
 
-# What the accelerator paths raise today: device-mismatch RuntimeErrors, the
-# missing MPS kernel for cholesky_inverse, the MPS float64 TypeError and the
-# assertion in assert_on_device. PR-2b tightens this per test as it fixes them.
-_FAILS_TODAY = (RuntimeError, NotImplementedError, TypeError, AssertionError)
 
-
-def devices(*, accelerator_xfail: str | None = None) -> list:
+def devices(
+    *,
+    xfail: str | None = None,
+    raises: type[BaseException] | tuple[type[BaseException], ...] = RuntimeError,
+    every_device: bool = False,
+) -> list:
     """Parametrization over ``available_devices()``.
 
-    The CPU case is always plain. The accelerator case gets a strict xfail
-    with ``accelerator_xfail`` as its reason when one is given, so every test
-    states next to its signature whether (and why) it fails on the
-    accelerator today.
+    When ``xfail`` is given, the accelerator case (every case, with
+    ``every_device=True``) gets a strict xfail with that reason and the
+    exception type(s) observed today in ``raises``, so every test states next
+    to its signature whether (and why) it fails today. Otherwise the CPU case
+    is plain; it is never marked for an accelerator-only failure.
     """
     params = []
     for device in available_devices():
         marks = []
-        if device != "cpu" and accelerator_xfail is not None:
-            marks.append(
-                pytest.mark.xfail(
-                    strict=True, raises=_FAILS_TODAY, reason=accelerator_xfail
-                )
-            )
+        if xfail is not None and (every_device or device != "cpu"):
+            marks.append(pytest.mark.xfail(strict=True, raises=raises, reason=xfail))
         params.append(pytest.param(device, marks=marks))
     return params
 
@@ -116,7 +113,11 @@ def test_protonet_trains_and_predicts(device):
 
 
 @pytest.mark.parametrize(
-    "device", devices(accelerator_xfail="#170: temperature buffer stays on CPU")
+    "device",
+    devices(
+        xfail="#170: temperature buffer stays on CPU",
+        raises=(RuntimeError, AssertionError),
+    ),
 )
 def test_protonet_with_temperature_predicts(device):
     model, x, _ = _protonet(device, use_temperature=True)
@@ -151,7 +152,8 @@ def test_protonet_save_load_round_trip(device, tmp_path):
 @pytest.mark.parametrize(
     "device",
     devices(
-        accelerator_xfail="#170: temperature registered after the module was moved"
+        xfail="#170: temperature registered after the module was moved",
+        raises=(RuntimeError, AssertionError),
     ),
 )
 def test_stored_tensors_on_device(build, device):
@@ -175,7 +177,9 @@ _GP_NO_CHOLESKY_KERNEL = (
 )
 
 
-@pytest.mark.parametrize("device", devices(accelerator_xfail=_GP_NO_CHOLESKY_KERNEL))
+@pytest.mark.parametrize(
+    "device", devices(xfail=_GP_NO_CHOLESKY_KERNEL, raises=NotImplementedError)
+)
 def test_gp_predicts(device):
     model, x, _ = _gp(device)
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
@@ -183,7 +187,7 @@ def test_gp_predicts(device):
 
 @pytest.mark.parametrize(
     "device",
-    devices(accelerator_xfail="#177: compute_embeddings does not move its input"),
+    devices(xfail="#177: compute_embeddings does not move its input"),
 )
 def test_gp_update_support(device):
     model, x, y = _gp(device)
@@ -194,14 +198,16 @@ def test_gp_update_support(device):
 
 @pytest.mark.parametrize(
     "device",
-    devices(accelerator_xfail="#177: compute_embeddings does not move its input"),
+    devices(xfail="#177: compute_embeddings does not move its input"),
 )
 def test_gp_vis_support_training(device):
     model, _, _ = _gp(device, vis_support=True, support_size=10)
     assert set(model.support) == set(range(CLASSES))
 
 
-@pytest.mark.parametrize("device", devices(accelerator_xfail=_GP_NO_CHOLESKY_KERNEL))
+@pytest.mark.parametrize(
+    "device", devices(xfail=_GP_NO_CHOLESKY_KERNEL, raises=NotImplementedError)
+)
 def test_gp_save_load_round_trip(device, tmp_path):
     model, x, _ = _gp(device)
     before = model.predict(x[:5])
@@ -232,7 +238,12 @@ def test_gp_load_onto_device(device, tmp_path):
 @pytest.mark.parametrize(
     "device",
     devices(
-        accelerator_xfail=("MPS has no float64; PR-2b casts inputs to the model dtype")
+        xfail=(
+            "#188: inputs are cast to the embedding dtype in PR-2b "
+            "(CPU raises mat1/mat2 dtype mismatch; MPS has no float64)"
+        ),
+        raises=(RuntimeError, TypeError),
+        every_device=True,
     ),
 )
 def test_predict_accepts_float64_input(build, device):
