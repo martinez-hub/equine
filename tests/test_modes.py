@@ -79,10 +79,13 @@ _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", 
 def test_protonet_update_support_on_untrained_model():
     """A freshly constructed EquineProtonet accepts a support set (#179).
 
-    Guards the inner ``Protonet.update_support`` change: it computes the
-    global moments in training mode too. This passes whether or not the
-    wrapper switches to eval mode first; the eval-mode computation and the
-    mode restore are pinned by the ``*_restores_callers_mode`` tests below.
+    Pins #179 end to end. The wrapper's switch to eval mode is enough for
+    it, so this passes with the inner ``Protonet.update_support`` change
+    reverted; that change (the global moments computed in training mode too)
+    is guarded by
+    ``test_protonet_update_support_in_train_mode_computes_global_moments``.
+    The eval-mode computation and the mode restore are pinned by the
+    ``*_restores_callers_mode`` tests below.
     """
     torch.manual_seed(0)
     _, x, y = separable_dataset()
