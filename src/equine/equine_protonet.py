@@ -619,7 +619,10 @@ class EquineProtonet(Equine):
         Returns
         -------
         tuple[dict[str, Any], torch.Tensor, torch.Tensor]
-            A tuple containing the model summary, the held out calibration data, and the calibration labels.
+            A tuple containing the model summary, the held out calibration
+            data (``calib_x``, moved to the model device and cast to the
+            model's parameter dtype) and the calibration labels (``calib_y``,
+            moved to the model device).
         """
         self.train()
 

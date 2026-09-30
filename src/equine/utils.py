@@ -843,11 +843,14 @@ def _require_device(
             f"{what} ({_shown(value)}) is not available on this machine{hint}."
         )
     if device.index is not None:
-        count = getattr(torch.get_device_module(device.type), "device_count", None)
-        if count is not None and device.index >= count():
+        device_count = getattr(
+            torch.get_device_module(device.type), "device_count", None
+        )
+        count = device_count() if device_count is not None else None
+        if count is not None and device.index >= count:
             raise ValueError(
                 f"{what} ({_shown(value)}) names device index {device.index}, but "
-                f"this machine has {count()} {device.type} device(s){hint}."
+                f"this machine has {count} {device.type} device(s){hint}."
             )
 
 

@@ -185,6 +185,11 @@ def _cholesky_inverse(u: torch.Tensor) -> torch.Tensor:
     return torch.cholesky_inverse(u)
 
 
+def _sync_seen_count(module: "_Laplace", incompatible_keys: Any) -> None:
+    """``load_state_dict`` post hook: the Python ``_seen_count`` follows the loaded ``seen_data``."""
+    module._seen_count = int(module.seen_data)
+
+
 class _Laplace(torch.nn.Module):
     """
     A private class to compute a Laplace approximation to a Gaussian Process (GP)
@@ -259,8 +264,10 @@ class _Laplace(torch.nn.Module):
         self.register_buffer("seen_data", torch.tensor(0))
         # Python mirror of seen_data for the asserts in the forward pass:
         # reading the buffer would synchronize with the accelerator on every
-        # forward. Kept beside the buffer (which stays in the state_dict).
+        # forward. Kept beside the buffer (which stays in the state_dict) and
+        # read back from it after any load_state_dict (one sync per load).
         self._seen_count: int = 0
+        self.register_load_state_dict_post_hook(_sync_seen_count)
 
         precision = torch.eye(num_random_features) * self.ridge_penalty
         self.register_buffer("precision", precision)
@@ -1140,12 +1147,13 @@ class EquineGP(Equine):
         eq_model.model.load_state_dict(
             model_save.get("laplace_model_save"), strict=False
         )
+        # (_seen_count already follows the loaded seen_data: load_state_dict
+        # post hook.)
         eq_model.model.seen_data = (
             model_save.get("laplace_model_save")
             .get("seen_data")
             .to(eq_model.model.precision.device)
         )
-        eq_model.model._seen_count = int(eq_model.model.seen_data)
 
         eq_model.model.set_training_params(
             model_save.get("num_data"), model_save.get("train_batch_size")

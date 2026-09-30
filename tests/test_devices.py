@@ -204,6 +204,31 @@ def test_gp_seen_count_mirrors_the_seen_data_buffer(device, tmp_path):
 
 
 @pytest.mark.parametrize("device", devices())
+def test_gp_seen_count_follows_load_state_dict(device):
+    """Weights copied through the public ``nn.Module.load_state_dict`` bring the counter along.
+
+    ``seen_data`` arrives with the state_dict; the Python mirror the forward
+    asserts read must follow it, or a model rebuilt this way refuses to
+    predict ("Not seen sufficient data for precision matrix").
+    """
+    trained, x, _ = _gp(device)
+    dataset, _, _ = separable_dataset()
+    fresh = eq.EquineGP(
+        BasicEmbeddingModel(FEATURES, CLASSES),
+        CLASSES,
+        CLASSES,
+        num_random_features=16,
+        device=device,
+    )
+    fresh.model.set_training_params(len(dataset), 32)
+    fresh.load_state_dict(trained.state_dict())
+    assert int(fresh.model.seen_data) == len(dataset)
+    assert fresh.model._seen_count == len(dataset)
+    fresh.eval()
+    _assert_same_predictions(trained.predict(x[:5]), fresh.predict(x[:5]))
+
+
+@pytest.mark.parametrize("device", devices())
 def test_gp_vis_support_training(device):
     model, _, _ = _gp(device, vis_support=True, support_size=10)
     assert set(model.support) == set(range(CLASSES))
