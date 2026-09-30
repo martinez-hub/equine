@@ -77,11 +77,17 @@ _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", 
 
 
 def test_protonet_update_support_on_untrained_model():
-    """A freshly constructed EquineProtonet accepts a support set (#179)."""
+    """A freshly constructed EquineProtonet accepts a support set (#179).
+
+    Guards the inner ``Protonet.update_support`` change: it computes the
+    global moments in training mode too. This passes whether or not the
+    wrapper switches to eval mode first; the eval-mode computation and the
+    mode restore are pinned by the ``*_restores_callers_mode`` tests below.
+    """
     torch.manual_seed(0)
     _, x, y = separable_dataset()
     model = eq.EquineProtonet(BasicEmbeddingModel(FEATURES, CLASSES), CLASSES)
-    assert model.training  # nn.Module default: this is the failing configuration
+    assert model.training  # nn.Module default: the configuration that used to fail
     model.update_support(x, y.float(), 0.5)
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 

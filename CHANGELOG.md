@@ -13,11 +13,11 @@
   `Did not reset precision matrix at start of epoch`), and a training-mode
   forward marks the cached Laplace covariance stale, so a `predict` issued
   mid-epoch does not freeze a covariance that later eval-mode predictions
-  would reuse. Every submodule's mode
-  is restored individually, so an embedding frozen for fine-tuning
-  (`model.train(); model.embedding_model.eval()`, keeping BatchNorm statistics
-  and dropout fixed) is still frozen after the call, as is any other mix the
-  caller set. `EquineGP.train_model` toggles training and eval mode on the
+  would reuse. Every submodule's mode is restored individually, so an
+  embedding frozen for fine-tuning (`model.train();
+  model.embedding_model.eval()`, keeping BatchNorm statistics and dropout
+  fixed) is still frozen after the call, as is any other mix the caller set.
+  `EquineGP.train_model` toggles training and eval mode on the
   wrapper rather than only on the inner module, and both classes leave the
   model in eval mode afterwards. `Protonet.update_support` computes the global
   moments of the support embeddings whatever mode the caller left the model in
