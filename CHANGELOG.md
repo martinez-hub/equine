@@ -7,8 +7,13 @@
   #182, #212). `predict` on both classes runs under `torch.no_grad()` and
   performs a single embedding pass (previously two); its outputs are ordinary
   tensors without a `grad_fn`, so input attribution through `predict` no
-  longer works (use `forward`). `predict` no longer goes through
-  `nn.Module.__call__`, so forward hooks do not observe it. `EquineGP.update_support`
+  longer works (use `forward`). `predict` no longer calls the `EquineGP` /
+  `EquineProtonet` object or its inner module (`model.model`) through
+  `nn.Module.__call__`, so forward hooks registered on those do not observe
+  it; hooks on the embedding model still fire, once per call (previously
+  twice). `EquineGP.forward` likewise no longer runs hooks registered on the
+  inner `_Laplace` module (`model.model`), only on the wrapper and the
+  embedding model. `EquineGP.update_support`
   and `EquineGP.load` embed the support set once per class; loaded GP models
   expose `support_embeddings`. The public `EquineGP.compute_prototypes()` still
   re-embeds the support and now refreshes `support_embeddings` as well.
