@@ -231,7 +231,7 @@ class Protonet(torch.nn.Module):
         elif cov_type == CovType.DIAGONAL:
             class_covariance = torch.var(embedding, dim=0)
         elif cov_type == CovType.UNIT:
-            class_covariance = torch.ones(self.emb_out_dim)
+            class_covariance = torch.ones(self.emb_out_dim, device=self.device)
         else:
             raise ValueError
 
@@ -323,9 +323,11 @@ class Protonet(torch.nn.Module):
         total_support = sum([x.shape[0] for x in class_cov_dict.values()])
 
         if cov_type == CovType.FULL:
-            shared_covariance = torch.zeros((self.emb_out_dim, self.emb_out_dim))
+            shared_covariance = torch.zeros(
+                (self.emb_out_dim, self.emb_out_dim), device=self.device
+            )
         elif cov_type == CovType.DIAGONAL:
-            shared_covariance = torch.zeros(self.emb_out_dim)
+            shared_covariance = torch.zeros(self.emb_out_dim, device=self.device)
         else:
             raise ValueError(
                 "Shared covariance can only be used with FULL or DIAGONAL (not UNIT) covariance types"
@@ -437,11 +439,13 @@ class Protonet(torch.nn.Module):
         support : OrderedDict
             Ordered dict containing class labels and their associated support examples.
         """
-        self.support = support  # TODO torch.nn.ParameterDict(support)
+        self.support = OrderedDict(
+            (label, x.to(self.device)) for label, x in support.items()
+        )  # TODO torch.nn.ParameterDict(support)
 
         support_embs = OrderedDict().fromkeys(support.keys(), torch.Tensor())
-        for label in support:
-            support_embs[label] = self.compute_embeddings(support[label])
+        for label in self.support:
+            support_embs[label] = self.compute_embeddings(self.support[label])
 
         self.support_embeddings = (
             support_embs  # TODO torch.nn.ParameterDict(support_embs)
@@ -631,10 +635,10 @@ class EquineProtonet(Equine):
         )
         optimizer = opt_class(self.parameters())
 
-        train_x.to(self.device)
-        train_y.to(self.device)
-        calib_x.to(self.device)
-        calib_y.to(self.device)
+        train_x = train_x.to(self.device)
+        train_y = train_y.to(self.device)
+        calib_x = calib_x.to(self.device)
+        calib_y = calib_y.to(self.device)
 
         for i in tqdm(range(num_episodes)):
             optimizer.zero_grad()

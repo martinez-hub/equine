@@ -150,16 +150,7 @@ def test_protonet_save_load_round_trip(device, tmp_path):
 
 
 @_BUILDERS
-@pytest.mark.parametrize(
-    "device",
-    devices(
-        xfail=(
-            "#170/#177: temperature stays on CPU; "
-            "Protonet raw support[label] and GP _Laplace.seen_data too"
-        ),
-        raises=AssertionError,
-    ),
-)
+@pytest.mark.parametrize("device", devices())
 def test_stored_tensors_on_device(build, device):
     model, _, _ = build(device)
     assert_on_device(model, device)
@@ -189,10 +180,7 @@ def test_gp_predicts(device):
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
-@pytest.mark.parametrize(
-    "device",
-    devices(xfail="#177: compute_embeddings does not move its input"),
-)
+@pytest.mark.parametrize("device", devices())
 def test_gp_update_support(device):
     model, x, y = _gp(device)
     model.update_support(x, y.long(), 10)
@@ -200,10 +188,7 @@ def test_gp_update_support(device):
     assert model.prototypes.shape[0] == CLASSES  # one prototype per class
 
 
-@pytest.mark.parametrize(
-    "device",
-    devices(xfail="#177: compute_embeddings does not move its input"),
-)
+@pytest.mark.parametrize("device", devices())
 def test_gp_vis_support_training(device):
     model, _, _ = _gp(device, vis_support=True, support_size=10)
     assert set(model.support) == set(range(CLASSES))

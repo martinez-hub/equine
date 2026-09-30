@@ -263,7 +263,7 @@ class _Laplace(torch.nn.Module):
         """
         identity = torch.eye(self.precision.shape[0], device=self.precision.device)
         self.precision: torch.Tensor = identity * self.ridge_penalty
-        self.seen_data: torch.Tensor = torch.tensor(0)
+        self.seen_data: torch.Tensor = torch.tensor(0, device=self.precision.device)
         self.recompute_covariance = True
 
     @icontract.require(lambda num_data: num_data > 0)
@@ -660,11 +660,13 @@ class EquineGP(Equine):
             )
             support.update(class_support)
 
-        self.support = support
+        self.support = OrderedDict(
+            (label, x.to(self.device)) for label, x in support.items()
+        )
 
         support_embeddings = OrderedDict().fromkeys(self.support.keys(), torch.Tensor())
-        for label in support:
-            support_embeddings[label] = self.compute_embeddings(support[label])
+        for label in self.support:
+            support_embeddings[label] = self.compute_embeddings(self.support[label])
 
         self.support_embeddings = support_embeddings
         self.prototypes: torch.Tensor = self.compute_prototypes()
@@ -683,6 +685,7 @@ class EquineGP(Equine):
         torch.Tensor
             Output embeddings .
         """
+        x = x.to(self.device)
         f = self.model.feature_extractor(x)
         f_reduc = self.model.jl(f)
         if self.model.normalize_gp_features:
@@ -820,9 +823,12 @@ class EquineGP(Equine):
         EquineOutput
             Output object containing prediction probabilities and OOD scores.
         """
+        X = X.to(self.device)
         logits = self(X)
         preds = torch.softmax(logits, dim=1)
-        equiprobable = torch.ones(self.num_outputs) / self.num_outputs
+        equiprobable = (
+            torch.ones(self.num_outputs, device=logits.device) / self.num_outputs
+        )
         max_entropy = torch.sum(torch.special.entr(equiprobable))
         ood_score = torch.sum(torch.special.entr(preds), dim=1) / max_entropy
         embeddings = self.compute_embeddings(X)
@@ -1067,7 +1073,11 @@ class EquineGP(Equine):
         eq_model.model.load_state_dict(
             model_save.get("laplace_model_save"), strict=False
         )
-        eq_model.model.seen_data = model_save.get("laplace_model_save").get("seen_data")
+        eq_model.model.seen_data = (
+            model_save.get("laplace_model_save")
+            .get("seen_data")
+            .to(eq_model.model.precision.device)
+        )
 
         eq_model.model.set_training_params(
             model_save.get("num_data"), model_save.get("train_batch_size")
