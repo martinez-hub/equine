@@ -151,7 +151,13 @@ class Protonet(torch.nn.Module):
         torch.Tensor
             Fully computed embedding tensors for the given X tensor.
         """
-        model_embeddings = self.embedding_model(X.to(self.device))
+        # Inputs follow the embedding: its device, and its parameter dtype so a
+        # float64 input to a float32 model is accepted (MPS has no float64).
+        param = next(self.embedding_model.parameters(), None)
+        X = X.to(
+            device=self.device, dtype=param.dtype if param is not None else X.dtype
+        )
+        model_embeddings = self.embedding_model(X)
         head_embeddings = self.model_head(model_embeddings)
         return head_embeddings
 
@@ -821,7 +827,9 @@ class EquineProtonet(Equine):
         Parameters
         ----------
         X : torch.Tensor
-            Input tensor.
+            Input tensor. It is moved to the model device and cast to the
+            embedding model's parameter dtype (so a float64 input to a float32
+            model is accepted; on MPS, which has no float64, this is required).
 
         Returns
         -------

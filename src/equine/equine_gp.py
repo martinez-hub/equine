@@ -177,6 +177,13 @@ class _RandomFourierFeatures(torch.nn.Module):
         return k
 
 
+def _cholesky_inverse(u: torch.Tensor) -> torch.Tensor:
+    """cholesky_inverse with a CPU round trip where the kernel is missing (MPS)."""
+    if u.device.type == "mps":
+        return torch.cholesky_inverse(u.cpu()).to(u.device)
+    return torch.cholesky_inverse(u)
+
+
 class _Laplace(torch.nn.Module):
     """
     A private class to compute a Laplace approximation to a Gaussian Process (GP)
@@ -365,7 +372,7 @@ class _Laplace(torch.nn.Module):
                     )
                     u, info = torch.linalg.cholesky_ex(self.precision + jitter)
                     assert (info == 0).all(), "Precision matrix inversion failed!"
-                    torch.cholesky_inverse(u, out=self.covariance)
+                    self.covariance.copy_(_cholesky_inverse(u))
 
                 self.recompute_covariance: bool = False
 
@@ -685,7 +692,7 @@ class EquineGP(Equine):
         torch.Tensor
             Output embeddings .
         """
-        x = x.to(self.device)
+        x = self._input_to_model(x)
         f = self.model.feature_extractor(x)
         f_reduc = self.model.jl(f)
         if self.model.normalize_gp_features:
@@ -788,6 +795,13 @@ class EquineGP(Equine):
                 optimizer.step()
         self.temperature.requires_grad = False
 
+    def _input_to_model(self, X: torch.Tensor) -> torch.Tensor:
+        """Move ``X`` to the model device and cast it to the embedding's parameter dtype."""
+        param = next(self.model.feature_extractor.parameters(), None)
+        return X.to(
+            device=self.device, dtype=param.dtype if param is not None else X.dtype
+        )
+
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
         EquineGP forward function, generates logits for classification.
@@ -795,14 +809,15 @@ class EquineGP(Equine):
         Parameters
         ----------
         X : torch.Tensor
-            Input tensor for generating predictions.
+            Input tensor for generating predictions. Moved to the model device
+            and cast to the embedding model's parameter dtype.
 
         Returns
         -------
         torch.Tensor
             Output probabilities computed.
         """
-        X = X.to(self.device)
+        X = self._input_to_model(X)
         preds = self.model(X)
         return preds / self.temperature.to(self.device)
 
@@ -816,14 +831,16 @@ class EquineGP(Equine):
         Parameters
         ----------
         X : torch.Tensor
-            Input tensor.
+            Input tensor. It is moved to the model device and cast to the
+            embedding model's parameter dtype (so a float64 input to a float32
+            model is accepted; on MPS, which has no float64, this is required).
 
         Returns
         -------
         EquineOutput
             Output object containing prediction probabilities and OOD scores.
         """
-        X = X.to(self.device)
+        X = self._input_to_model(X)
         logits = self(X)
         preds = torch.softmax(logits, dim=1)
         equiprobable = (

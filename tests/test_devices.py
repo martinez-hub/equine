@@ -5,14 +5,12 @@
 
 Every test runs on CPU and on whichever accelerator this machine has (see
 ``conftest.available_devices()``); on CI (Ubuntu, no accelerator) only the
-CPU case is collected. The accelerator case carries a *strict* xfail only
-where the path is known to fail today (the fact table in
-docs/superpowers/plans/2026-09-29-stack-2-device-correctness.md). The CPU
-case is never marked for an accelerator-only failure; the float64 input test
-and the CPU-only #216 case are marked on CPU deliberately because they fail
-there too. The fixes in PR-2b flip the marked cases to passing by removing
-the marks, and a strict xfail that starts passing fails the run so a mark
-cannot go stale.
+CPU case is collected. PR-2a marked, with a *strict* xfail, exactly the
+cases that failed then (the fact table in
+docs/superpowers/plans/2026-09-29-stack-2-device-correctness.md) and PR-2b
+flipped them by removing the marks as it fixed each path; ``devices(xfail=)``
+stays for later layers. A strict xfail that starts passing fails the run, so
+a mark cannot go stale.
 """
 
 import pytest
@@ -165,16 +163,7 @@ def test_gp_trains(device):
     assert model.model.precision.device.type == torch.device(device).type
 
 
-# EquineGP.forward already moves X to the device, so the predict paths get
-# past compute_embeddings (#177) and fail on the missing MPS kernel (#173).
-_GP_NO_CHOLESKY_KERNEL = (
-    "#173: aten::cholesky_inverse has no MPS kernel (predict moves its input)"
-)
-
-
-@pytest.mark.parametrize(
-    "device", devices(xfail=_GP_NO_CHOLESKY_KERNEL, raises=NotImplementedError)
-)
+@pytest.mark.parametrize("device", devices())
 def test_gp_predicts(device):
     model, x, _ = _gp(device)
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
@@ -194,9 +183,7 @@ def test_gp_vis_support_training(device):
     assert set(model.support) == set(range(CLASSES))
 
 
-@pytest.mark.parametrize(
-    "device", devices(xfail=_GP_NO_CHOLESKY_KERNEL, raises=NotImplementedError)
-)
+@pytest.mark.parametrize("device", devices())
 def test_gp_save_load_round_trip(device, tmp_path):
     model, x, _ = _gp(device)
     before = model.predict(x[:5])
@@ -224,18 +211,9 @@ def test_gp_load_onto_device(device, tmp_path):
 
 
 @_BUILDERS
-@pytest.mark.parametrize(
-    "device",
-    devices(
-        xfail=(
-            "#188: inputs are cast to the embedding dtype in PR-2b "
-            "(CPU raises mat1/mat2 dtype mismatch; MPS has no float64)"
-        ),
-        raises=(RuntimeError, TypeError),
-        every_device=True,
-    ),
-)
+@pytest.mark.parametrize("device", devices())
 def test_predict_accepts_float64_input(build, device):
+    """Inputs are cast to the embedding's parameter dtype at the model boundary."""
     model, x, _ = build(device)
     assert_valid_prediction(model.predict(x[:5].double()), 5, CLASSES)
 
