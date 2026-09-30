@@ -441,8 +441,11 @@ class Protonet(torch.nn.Module):
         support : OrderedDict
             Ordered dict containing class labels and their associated support examples.
         """
+        # Through the model boundary: on the device and, for floating support,
+        # in the embedding's dtype (so a float32 model on MPS accepts float64).
         self.support = OrderedDict(
-            (label, x.to(self.device)) for label, x in support.items()
+            (label, _input_to_model(x, self.embedding_model, self.device))
+            for label, x in support.items()
         )  # TODO torch.nn.ParameterDict(support)
 
         support_embs = OrderedDict().fromkeys(support.keys(), torch.Tensor())
@@ -637,9 +640,12 @@ class EquineProtonet(Equine):
         )
         optimizer = opt_class(self.parameters())
 
-        train_x = train_x.to(self.device)
-        train_y = train_y.to(self.device)
-        calib_x = calib_x.to(self.device)
+        # train_x/train_y stay on the CPU: generate_episode/generate_support
+        # sample with randperm, unique and per-class Python loops, which sync
+        # on every step when given accelerator tensors (4x slower on MPS).
+        # Each episode and the support cross to self.device at the model
+        # boundary (Protonet.compute_embeddings / Protonet.update_support).
+        calib_x = _input_to_model(calib_x, self.embedding_model, self.device)
         calib_y = calib_y.to(self.device)
 
         for i in tqdm(range(num_episodes)):

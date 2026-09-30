@@ -611,7 +611,7 @@ class EquineGP(Equine):
             epoch_loss = 0.0
             for i, (xs, labels) in enumerate(train_loader):
                 opt.zero_grad()
-                xs = xs.to(self.device)
+                xs = self._input_to_model(xs)
                 labels = labels.to(self.device)
                 yhats = self.model(xs)
                 loss = loss_fn(yhats, labels.to(torch.long))
@@ -629,7 +629,7 @@ class EquineGP(Equine):
                 and val_metrics_outputs is not None
             ):
                 for _, (xs_val, labels_val) in enumerate(val_loader):
-                    xs_val = xs_val.to(self.device)
+                    xs_val = self._input_to_model(xs_val)
                     labels_val = labels_val.to(self.device)
                     yhats_val = self.model(xs_val)
                     for metric in val_metrics:
@@ -680,8 +680,10 @@ class EquineGP(Equine):
             )
             support.update(class_support)
 
+        # Through the model boundary: on the device and, for floating support,
+        # in the model's dtype (so a float32 model on MPS accepts float64).
         self.support = OrderedDict(
-            (label, x.to(self.device)) for label, x in support.items()
+            (label, self._input_to_model(x)) for label, x in support.items()
         )
 
         support_embeddings = OrderedDict().fromkeys(self.support.keys(), torch.Tensor())
@@ -798,7 +800,7 @@ class EquineGP(Equine):
         for _ in range(num_calibration_epochs):
             for xs, labels in calibration_loader:
                 optimizer.zero_grad()
-                xs = xs.to(self.device)
+                xs = self._input_to_model(xs)
                 labels = labels.to(self.device)
                 with torch.no_grad():
                     logits = self.model(xs)
@@ -809,8 +811,16 @@ class EquineGP(Equine):
         self.temperature.requires_grad = False
 
     def _input_to_model(self, X: torch.Tensor) -> torch.Tensor:
-        """Move ``X`` to the model device; a floating input is cast to the embedding's dtype (see ``utils._input_to_model``)."""
-        return _input_to_model(X, self.model.feature_extractor, self.device)
+        """
+        Move ``X`` to the model device; a floating input is cast to the model's dtype.
+
+        The reference is the Laplace head (``self.model``, see
+        ``utils._input_to_model``): its first parameter is the embedding
+        model's when that has one, else the head's own (``normalize.weight``
+        or ``beta``), so a parameter-less embedding such as ``nn.Identity``
+        still gets an input the float32 head can take.
+        """
+        return _input_to_model(X, self.model, self.device)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """

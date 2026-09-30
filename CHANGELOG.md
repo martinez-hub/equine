@@ -6,9 +6,16 @@
 - **Device handling** (#170, #177, #206, #216, #188). Both model classes now
   keep every tensor they own on their `device`: the `temperature` buffer, the
   support set, the GP's Laplace `seen_data` counter and the covariances it
-  allocates. Inputs are moved to the model device and, when floating point,
-  cast to the embedding model's parameter dtype (float64 inputs used to raise;
-  integer inputs, e.g. embedding indices, keep their dtype). `EquineGP.device`
+  allocates. Inputs cross to the model in one place: the arguments of
+  `predict`, `forward` and `compute_embeddings`, the support stored by
+  `update_support`, and every batch of `train_model` and
+  `EquineGP.calibrate_model` are moved to the model device and, when floating
+  point, cast to the model's parameter dtype (the embedding model's; for an
+  `EquineGP` whose embedding has no parameters, such as `nn.Identity`, the
+  Laplace head's). A float64 input to a float32 model used to raise; integer
+  inputs, e.g. embedding indices, keep their dtype. `EquineProtonet.train_model`
+  samples its episodes and support on the CPU and moves each batch at that
+  boundary. `EquineGP.device`
   is a `str` like `EquineProtonet.device`; `EquineGP.device_type` is deprecated
   and removed in the next release. `EquineGP.load` and `load_equine_model`
   accept `device=` (positional second argument) like `EquineProtonet.load`;

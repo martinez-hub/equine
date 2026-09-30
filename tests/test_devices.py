@@ -15,6 +15,7 @@ a mark cannot go stale.
 
 import pytest
 import torch
+import torchmetrics
 from conftest import (
     BasicEmbeddingModel,
     assert_on_device,
@@ -127,6 +128,7 @@ def test_protonet_with_temperature_predicts(device):
 def test_protonet_update_support(device):
     model, x, y = _protonet(device)
     model.update_support(x, y.float(), 0.5)
+    assert_on_device(model, device)  # the new support and its embeddings too
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
@@ -175,6 +177,7 @@ def test_gp_update_support(device):
     model.update_support(x, y.long(), 10)
     assert set(model.support) == set(range(CLASSES))
     assert model.prototypes.shape[0] == CLASSES  # one prototype per class
+    assert_on_device(model, device)  # the new support and its embeddings too
 
 
 @pytest.mark.parametrize("device", devices())
@@ -220,6 +223,113 @@ def test_gp_load_onto_device(device, tmp_path):
 def test_predict_accepts_float64_input(build, device):
     """Inputs are cast to the embedding's parameter dtype at the model boundary."""
     model, x, _ = build(device)
+    assert_valid_prediction(model.predict(x[:5].double()), 5, CLASSES)
+
+
+@_BUILDERS
+@pytest.mark.parametrize("device", devices())
+def test_update_support_accepts_float64_input(build, device):
+    """Support goes through the model boundary: moved to the device and cast to the embedding dtype."""
+    model, x, y = build(device)
+    if isinstance(model, eq.EquineProtonet):
+        model.update_support(x.double(), y.float(), 0.5)
+        support = model.model.support
+    else:
+        model.update_support(x.double(), y.long(), 10)
+        support = model.support
+    assert {t.dtype for t in support.values()} == {torch.float32}
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
+@pytest.mark.parametrize("device", devices())
+def test_gp_train_model_accepts_float64_dataset(device):
+    """The GP training, validation and calibration loops cast batches like predict does."""
+    torch.manual_seed(0)
+    _, x, y = separable_dataset()
+    dataset = torch.utils.data.TensorDataset(x.double(), y)
+    model = eq.EquineGP(
+        BasicEmbeddingModel(FEATURES, CLASSES),
+        CLASSES,
+        CLASSES,
+        num_random_features=16,
+        device=device,
+    )
+    model.train_model(
+        dataset,
+        torch.nn.CrossEntropyLoss(),
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=2,
+        batch_size=32,
+        validation_dataset=dataset,
+        # torchmetrics keeps its state where it is told to; the model moves
+        # the batches, so the metric must be on the same device.
+        val_metrics=[
+            torchmetrics.classification.MulticlassAccuracy(CLASSES).to(device)
+        ],
+    )
+    model.calibrate_model(dataset)
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
+@pytest.mark.parametrize("device", devices())
+def test_protonet_train_model_accepts_float64_dataset(device):
+    """Episodes, support and the calibration split all cross the model boundary."""
+    torch.manual_seed(0)
+    _, x, y = separable_dataset()
+    dataset = torch.utils.data.TensorDataset(x.double(), y)
+    model = eq.EquineProtonet(
+        BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, device=device
+    )
+    model.train_model(
+        dataset,
+        num_episodes=5,
+        calib_frac=0.2,
+        support_size=10,
+        way=3,
+        episode_size=30,
+    )
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
+@pytest.mark.parametrize("device", devices())
+def test_protonet_identity_embedding(device):
+    """A Protonet over raw features: emb_out_dim is the input width.
+
+    Without a parameter anywhere (the head is an Identity too) there is
+    nothing to train, so the support is set directly; inputs are moved but
+    have no dtype to be cast to.
+    """
+    torch.manual_seed(0)
+    _, x, y = separable_dataset()
+    model = eq.EquineProtonet(torch.nn.Identity(), FEATURES, device=device)
+    assert model.model.emb_out_dim == x.shape[1]
+    model.eval()  # the support covariance is an inference-time quantity
+    model.update_support(x, y.float(), 0.5)
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+
+
+@pytest.mark.parametrize("device", devices())
+def test_gp_identity_embedding_casts_to_the_head_dtype(device):
+    """With a parameter-less embedding the Laplace head's parameters set the input dtype, so float64 input still works."""
+    torch.manual_seed(0)
+    dataset, x, _ = separable_dataset()
+    model = eq.EquineGP(
+        torch.nn.Identity(), FEATURES, CLASSES, num_random_features=16, device=device
+    )
+    assert model.num_deep_features == x.shape[1]
+    model.train_model(
+        dataset,
+        torch.nn.CrossEntropyLoss(),
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=2,
+        batch_size=32,
+    )
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
     assert_valid_prediction(model.predict(x[:5].double()), 5, CLASSES)
 
 
