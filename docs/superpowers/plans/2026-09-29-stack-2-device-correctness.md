@@ -313,7 +313,7 @@ Branch: `git checkout -b stack2/pr-2d-mode-handling` from PR-2c's tip.
   - `test_protonet_update_support_in_train_mode_computes_global_moments`: trained model, `model.train()`, `update_support(...)`, `assert model.model.global_mean is not None` and predict works.
   - `test_gp_predict_after_train_mode_does_not_touch_precision`: trained GP, `model.train()`, snapshot `precision.clone()` and `seen_data.clone()`, call `predict` three times, assert both unchanged and no exception. Today: `AssertionError: Did not reset precision matrix`.
   - `test_gp_train_model_leaves_wrapper_and_inner_in_eval`: after `train_model`, `model.training is False and model.model.training is False`. Today: wrapper `True`.
-  - `test_predict_leaves_model_in_eval[protonet|gp]`: after `predict`, `model.training is False`.
+  - `test_predict_restores_callers_mode[protonet|gp][train|eval]`: after `predict`, wrapper and inner `training` flags equal the starting mode; same for `update_support` on both classes; plus a two-epoch manual GP fine-tune loop calling `predict` between epochs.
 
 - [ ] **Step 2: Commit** `test: mode handling: untrained update_support, predict in train mode, wrapper/inner consistency (#209, #179)`.
 
@@ -321,9 +321,9 @@ Branch: `git checkout -b stack2/pr-2d-mode-handling` from PR-2c's tip.
 
 **Files:** Modify `src/equine/equine_gp.py` (`train_model` ~575, 589; `predict`), `src/equine/equine_protonet.py` (`Protonet.update_support` ~452-460; `EquineProtonet.update_support`; `predict`).
 
-- [ ] **Step 1: GP.** `train_model`: `self.train()` at the start of the loop body in place of `self.model.train()`, and `self.eval()` in place of `self.model.eval()` (the wrapper's call propagates to the inner module). `predict`: first statement `self.eval()`; document in the docstring that predict switches the model to eval mode.
+- [ ] **Step 1: GP.** `train_model`: `self.train()` at the start of the loop body in place of `self.model.train()`, and `self.eval()` in place of `self.model.eval()` (the wrapper's call propagates to the inner module). `predict` and `update_support`: run their bodies inside `_eval_mode(self)` (a `contextlib` context manager in `equine.py` that switches to eval and restores the caller's previous mode on exit; decision 2026-09-29 after review: public inference entry points must not change the caller's mode, so a user's fine-tune loop keeps its dropout/BatchNorm state). Document it in the docstrings.
 
-- [ ] **Step 2: Protonet.** `Protonet.update_support`: compute `self.compute_global_moments()` unconditionally; keep the covariance choice (`PRED_COV_TYPE` in eval, `self.cov_type` in training) exactly as today so trained-model numerics do not move. `EquineProtonet.update_support`: `self.eval()` as its first statement. `EquineProtonet.predict`: `self.eval()` first.
+- [ ] **Step 2: Protonet.** `Protonet.update_support`: compute `self.compute_global_moments()` unconditionally; keep the covariance choice (`PRED_COV_TYPE` in eval, `self.cov_type` in training) exactly as today so trained-model numerics do not move. `EquineProtonet.update_support` and `EquineProtonet.predict`: bodies inside `_eval_mode(self)` (see Step 1).
 
 - [ ] **Step 3: Flip the Task 9 xfails; run** `tests/test_modes.py`, goldens, fixtures, whole suite. **Commit** `fix: update_support works on an untrained model; predict runs in eval mode; GP toggles mode on the wrapper (#209, #179)`.
 
