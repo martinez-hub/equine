@@ -178,11 +178,26 @@ class _RandomFourierFeatures(torch.nn.Module):
         return k
 
 
-def _cholesky_inverse(u: torch.Tensor) -> torch.Tensor:
-    """cholesky_inverse with a CPU round trip where the kernel is missing (MPS)."""
-    if u.device.type == "mps":
-        return torch.cholesky_inverse(u.cpu()).to(u.device)
-    return torch.cholesky_inverse(u)
+def _inverse_via_cholesky(a: torch.Tensor) -> torch.Tensor:
+    """
+    Invert the symmetric positive-definite ``a`` through its Cholesky factor.
+
+    On MPS the factorization and the inverse run on a CPU copy and the result
+    returns to MPS: torch 2.6 has no MPS kernel for ``linalg.cholesky_ex``,
+    and 2.6 to 2.9 none for ``cholesky_inverse``. On the CPU and CUDA the ops
+    run where ``a`` is, as before.
+    """
+    work = a.cpu() if a.device.type == "mps" else a
+    u, info = torch.linalg.cholesky_ex(work)
+    assert (info == 0).all(), "Precision matrix inversion failed!"
+    return torch.cholesky_inverse(u).to(a.device)
+
+
+def _entr(x: torch.Tensor) -> torch.Tensor:
+    """``torch.special.entr``, computed on a CPU copy for an MPS tensor (no MPS kernel in torch 2.6)."""
+    if x.device.type == "mps":
+        return torch.special.entr(x.cpu()).to(x.device)
+    return torch.special.entr(x)
 
 
 def _sync_seen_count(module: "_Laplace", incompatible_keys: Any) -> None:
@@ -384,10 +399,8 @@ class _Laplace(torch.nn.Module):
                         self.precision.shape[1],
                         device=self.precision.device,
                     )
-                    u, info = torch.linalg.cholesky_ex(self.precision + jitter)
-                    assert (info == 0).all(), "Precision matrix inversion failed!"
                     covariance = cast(torch.Tensor, self.covariance)
-                    covariance.copy_(_cholesky_inverse(u))
+                    covariance.copy_(_inverse_via_cholesky(self.precision + jitter))
 
                 self.recompute_covariance: bool = False
 
@@ -888,8 +901,8 @@ class EquineGP(Equine):
         equiprobable = (
             torch.ones(self.num_outputs, device=logits.device) / self.num_outputs
         )
-        max_entropy = torch.sum(torch.special.entr(equiprobable))
-        ood_score = torch.sum(torch.special.entr(preds), dim=1) / max_entropy
+        max_entropy = torch.sum(_entr(equiprobable))
+        ood_score = torch.sum(_entr(preds), dim=1) / max_entropy
         embeddings = self.compute_embeddings(X)
         eq_out = EquineOutput(
             classes=preds, ood_scores=ood_score, embeddings=embeddings

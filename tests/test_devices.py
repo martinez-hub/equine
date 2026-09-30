@@ -25,6 +25,7 @@ from conftest import (
 from golden_data import CLASSES, FEATURES, separable_dataset
 
 import equine as eq
+from equine.equine_gp import _entr, _inverse_via_cholesky
 
 pytestmark = pytest.mark.device
 
@@ -261,6 +262,37 @@ def test_gp_load_onto_device(device, tmp_path):
     assert generic.device == device
     assert_on_device(generic, device)
     _assert_same_predictions(before, generic.predict(x[:5]))
+
+
+@pytest.mark.parametrize("device", devices())
+def test_gp_inverse_and_entropy_helpers_return_to_the_device(device):
+    """The GP's covariance inversion and entropy work on every device and stay there.
+
+    On MPS both run on a CPU copy (torch 2.6 has no MPS kernel for
+    ``linalg.cholesky_ex`` or ``special.entr``, and 2.6 to 2.9 none for
+    ``cholesky_inverse``); the CPU and CUDA run the plain ops, which the
+    golden tests pin.
+    """
+    a = torch.tensor([[4.0, 1.0], [1.0, 3.0]], device=device)
+    inverse = _inverse_via_cholesky(a)
+    assert inverse.device == a.device
+    torch.testing.assert_close((a @ inverse).cpu(), torch.eye(2))
+    with pytest.raises(AssertionError, match="Precision matrix inversion failed"):
+        _inverse_via_cholesky(-a)
+
+    p = torch.tensor([0.0, 0.25, 0.75], device=device)
+    entropy = _entr(p)
+    assert entropy.device == p.device
+    torch.testing.assert_close(entropy.cpu(), torch.special.entr(p.cpu()))
+
+
+def test_gp_inverse_on_the_cpu_is_the_plain_cholesky_inverse():
+    """On the CPU the helper is exactly ``cholesky_ex`` then ``cholesky_inverse`` (goldens)."""
+    torch.manual_seed(0)
+    m = torch.rand(5, 5, dtype=torch.float64)
+    a = m @ m.T + torch.eye(5, dtype=torch.float64)
+    expected = torch.cholesky_inverse(torch.linalg.cholesky_ex(a)[0])
+    assert torch.equal(_inverse_via_cholesky(a), expected)
 
 
 # --- input dtype --------------------------------------------------------------

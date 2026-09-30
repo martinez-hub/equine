@@ -24,9 +24,10 @@
   one-GPU machine, `mps:1`) raises `ValueError`; so does loading a file
   whose tensors have a dtype the device lacks (float64 on MPS), naming the
   dtype. Assigning the deprecated `EquineGP.device_type` moves the module
-  with `device`. On MPS, which has no
-  `cholesky_inverse` kernel, the GP covariance is computed through a CPU round
-  trip; CPU and CUDA results are unchanged. Files saved after training on an
+  with `device`. For a model on MPS the GP covariance inversion and the
+  entropy in `EquineGP.predict` are computed on the CPU, because torch 2.6 to
+  2.9 lack some of those MPS kernels; CPU and CUDA results are unchanged.
+  Files saved after training on an
   accelerator hold accelerator tensors; pass `device="cpu"` when loading them
   on a machine without one.
 - **Model files no longer embed executable code by default** (#191). `save()`
