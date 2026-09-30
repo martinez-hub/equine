@@ -5,14 +5,15 @@
 
 Every test runs on CPU and on whichever accelerator this machine has (see
 ``conftest.available_devices()``); on CI (Ubuntu, no accelerator) only the
-CPU case is collected. The CPU case is never marked. The accelerator case
-carries a *strict* xfail only where the path is known to fail today (the
-fact table in docs/superpowers/plans/2026-09-29-stack-2-device-correctness.md);
-the fixes in PR-2b flip those cases to passing by removing the marks, and a
-strict xfail that starts passing fails the run so a mark cannot go stale.
+CPU case is collected. The accelerator case carries a *strict* xfail only
+where the path is known to fail today (the fact table in
+docs/superpowers/plans/2026-09-29-stack-2-device-correctness.md). The CPU
+case is never marked for an accelerator-only failure; the float64 input test
+and the CPU-only #216 case are marked on CPU deliberately because they fail
+there too. The fixes in PR-2b flip the marked cases to passing by removing
+the marks, and a strict xfail that starts passing fails the run so a mark
+cannot go stale.
 """
-
-import os
 
 import pytest
 import torch
@@ -53,6 +54,7 @@ def devices(
 
 
 def _protonet(device: str, use_temperature: bool = False):
+    """Short float32 training on ``device``; the float64 ``golden_data.trained_protonet`` must stay byte-stable and takes no device."""
     torch.manual_seed(0)
     dataset, x, y = separable_dataset()
     model = eq.EquineProtonet(
@@ -73,6 +75,7 @@ def _protonet(device: str, use_temperature: bool = False):
 
 
 def _gp(device: str, **train_kwargs):
+    """Short float32 training on ``device``; the float64 ``golden_data.trained_gp`` must stay byte-stable and takes no device."""
     torch.manual_seed(0)
     dataset, x, y = separable_dataset()
     model = eq.EquineGP(
@@ -96,10 +99,14 @@ def _gp(device: str, **train_kwargs):
 _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", "gp"])
 
 
-def _assert_same_predictions(a: eq.EquineOutput, b: eq.EquineOutput) -> None:
-    torch.testing.assert_close(b.classes.cpu(), a.classes.cpu(), atol=1e-5, rtol=0)
+def _assert_same_predictions(
+    expected: eq.EquineOutput, actual: eq.EquineOutput
+) -> None:
     torch.testing.assert_close(
-        b.ood_scores.cpu(), a.ood_scores.cpu(), atol=1e-5, rtol=0
+        actual.classes.cpu(), expected.classes.cpu(), atol=1e-5, rtol=0
+    )
+    torch.testing.assert_close(
+        actual.ood_scores.cpu(), expected.ood_scores.cpu(), atol=1e-5, rtol=0
     )
 
 
@@ -116,7 +123,7 @@ def test_protonet_trains_and_predicts(device):
     "device",
     devices(
         xfail="#170: temperature buffer stays on CPU",
-        raises=(RuntimeError, AssertionError),
+        raises=RuntimeError,
     ),
 )
 def test_protonet_with_temperature_predicts(device):
@@ -135,7 +142,7 @@ def test_protonet_update_support(device):
 def test_protonet_save_load_round_trip(device, tmp_path):
     model, x, _ = _protonet(device)
     before = model.predict(x[:5])
-    path = os.path.join(tmp_path, "protonet.eq")
+    path = str(tmp_path / "protonet.eq")
     model.save(path)
 
     generic = eq.load_equine_model(path)  # lands on the saved device
@@ -152,8 +159,11 @@ def test_protonet_save_load_round_trip(device, tmp_path):
 @pytest.mark.parametrize(
     "device",
     devices(
-        xfail="#170: temperature registered after the module was moved",
-        raises=(RuntimeError, AssertionError),
+        xfail=(
+            "#170/#177: temperature stays on CPU; "
+            "Protonet raw support[label] and GP _Laplace.seen_data too"
+        ),
+        raises=AssertionError,
     ),
 )
 def test_stored_tensors_on_device(build, device):
@@ -211,7 +221,7 @@ def test_gp_vis_support_training(device):
 def test_gp_save_load_round_trip(device, tmp_path):
     model, x, _ = _gp(device)
     before = model.predict(x[:5])
-    path = os.path.join(tmp_path, "gp.eq")
+    path = str(tmp_path / "gp.eq")
     model.save(path)
 
     generic = eq.load_equine_model(path)  # lands on the saved device
@@ -223,7 +233,7 @@ def test_gp_save_load_round_trip(device, tmp_path):
 def test_gp_load_onto_device(device, tmp_path):
     model, x, _ = _gp("cpu")
     before = model.predict(x[:5])
-    path = os.path.join(tmp_path, "gp.eq")
+    path = str(tmp_path / "gp.eq")
     model.save(path)
 
     loaded = eq.EquineGP.load(path, device)

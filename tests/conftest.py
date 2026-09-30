@@ -191,9 +191,6 @@ def available_devices() -> list[str]:
     return devices
 
 
-ACCELERATOR = next((d for d in available_devices() if d != "cpu"), None)
-
-
 def stored_tensors(model: eq.Equine) -> dict[str, torch.Tensor]:
     """Every tensor a trained equine model keeps: parameters, buffers, support,
     prototypes, covariances. Used to assert device placement after train/load.
@@ -206,7 +203,10 @@ def stored_tensors(model: eq.Equine) -> dict[str, torch.Tensor]:
     found: dict[str, torch.Tensor] = {}
     for name, t in list(model.named_parameters()) + list(model.named_buffers()):
         found[name] = t
-    holders = (("", model), ("model.", model.model))
+    holders = [("", model)]
+    inner = getattr(model, "model", None)
+    if inner is not None:
+        holders.append(("model.", inner))
     for attr in ("prototypes", "covariance", "global_mean", "global_covariance"):
         for prefix, holder in holders:
             t = getattr(holder, attr, None)
@@ -216,7 +216,7 @@ def stored_tensors(model: eq.Equine) -> dict[str, torch.Tensor]:
         for prefix, holder in holders:
             d = getattr(holder, attr, None) or {}
             for label, t in d.items():
-                if torch.is_tensor(t):
+                if torch.is_tensor(t) and t.numel() > 0:
                     found[f"{prefix}{attr}[{label}]"] = t
     return found
 
