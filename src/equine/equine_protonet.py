@@ -546,6 +546,9 @@ class EquineProtonet(Equine):
             self.epsilon,
             device=device,
         )
+        # Equine.__init__ moved the module before the temperature buffer
+        # existed; move again so every buffer is on self.device (#170).
+        self.to(self.device)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -612,9 +615,12 @@ class EquineProtonet(Equine):
         self.train()
 
         if self.use_temperature:
-            self.temperature: torch.Tensor = torch.Tensor(
-                self.init_temperature * torch.ones(1)
-            ).type_as(self.temperature)
+            self.temperature: torch.Tensor = torch.full(
+                (1,),
+                self.init_temperature,
+                dtype=self.temperature.dtype,
+                device=self.temperature.device,
+            )
 
         X, Y = dataset[:]
 

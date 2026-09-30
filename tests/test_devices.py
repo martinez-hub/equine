@@ -119,13 +119,7 @@ def test_protonet_trains_and_predicts(device):
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
-@pytest.mark.parametrize(
-    "device",
-    devices(
-        xfail="#170: temperature buffer stays on CPU",
-        raises=RuntimeError,
-    ),
-)
+@pytest.mark.parametrize("device", devices())
 def test_protonet_with_temperature_predicts(device):
     model, x, _ = _protonet(device, use_temperature=True)
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
@@ -278,11 +272,6 @@ def test_predict_accepts_float64_input(build, device):
                 BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, device="cpu"
             ),
             id="gp",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason="#216: EquineGP.device is a torch.device",
-            ),
         ),
     ],
 )

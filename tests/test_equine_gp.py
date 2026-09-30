@@ -306,3 +306,12 @@ def test_validation_metrics_are_reset_between_epochs() -> None:
     # compute()) shows every compute() exactly 2 updates; today the count
     # accumulates and each epoch's compute() covers all prior epochs.
     assert seen == [2, 2, 2]
+
+
+def test_device_type_is_deprecated_alias() -> None:
+    model = eq.EquineGP(
+        BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
+    )
+    with pytest.warns(DeprecationWarning, match="device_type"):
+        assert model.device_type == "cpu"
+    assert model.device == "cpu"

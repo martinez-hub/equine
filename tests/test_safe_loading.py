@@ -146,7 +146,7 @@ def _write_legacy_gp_file(model, path: str) -> None:
                 "num_classes": model.num_outputs,
                 "num_random_features": model.num_random_features,
                 "init_temperature": model.temperature.item(),
-                "device": model.device_type,
+                "device": model.device,
             },
             "support": model.support,
             "train_batch_size": model.model.train_batch_size,

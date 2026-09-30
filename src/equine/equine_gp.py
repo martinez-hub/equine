@@ -481,7 +481,10 @@ class EquineGP(Equine):
             List of strings of the names of the labels (ex ["streaming", "voip", ...])
         """
         super().__init__(
-            embedding_model, feature_names=feature_names, label_names=label_names
+            embedding_model,
+            device=device,
+            feature_names=feature_names,
+            label_names=label_names,
         )
         self.num_deep_features = emb_out_dim
         self.num_gp_features = emb_out_dim
@@ -506,9 +509,20 @@ class EquineGP(Equine):
             self.mean_field_factor,
             self.ridge_penalty,
         )
-        self.device_type = device
-        self.device: torch.device = torch.device(self.device_type)
-        self.model.to(self.device)
+        # Equine.__init__ moved the module before the temperature buffer and
+        # the Laplace head existed; move again so everything is on
+        # self.device (#170).
+        self.to(self.device)
+
+    @property
+    def device_type(self) -> str:
+        """Deprecated alias of ``device``; removed in the next release."""
+        warnings.warn(
+            "EquineGP.device_type is deprecated; use EquineGP.device (a str)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.device
 
     def train_model(
         self,
@@ -863,7 +877,7 @@ class EquineGP(Equine):
             "num_classes": self.num_outputs,
             "num_random_features": self.num_random_features,
             "init_temperature": self.temperature.item(),
-            "device": self.device_type,
+            "device": self.device,
         }
         # The feature extractor is the embedding model, which is stored on its
         # own below, so its weights are left out of the Laplace state_dict.
