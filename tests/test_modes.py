@@ -329,3 +329,35 @@ def test_gp_manual_fine_tune_loop_with_predict_per_epoch():
         assert model.training and model.model.training
     assert out is not None
     assert_valid_prediction(out, 5, CLASSES)
+
+
+def test_gp_train_mode_forward_invalidates_the_cached_covariance():
+    """A predict issued mid-epoch must not freeze the Laplace covariance for the rest of the epoch (#209).
+
+    predict computes in eval mode, which caches the covariance from the
+    precision matrix accumulated so far and clears ``recompute_covariance``.
+    Training forwards after it keep accumulating, so they must mark the cache
+    stale; otherwise every later eval-mode predict reuses a covariance that
+    misses the epoch's last batches.
+    """
+    model, x, _ = _gp()
+    laplace = model.model
+    num_data = laplace.num_data
+    assert num_data == x.shape[0] and laplace.train_batch_size == 32
+    model.train()
+    laplace.reset_precision_matrix()
+    with torch.no_grad():
+        for start in range(0, 96, 32):  # 96 > num_data - train_batch_size
+            model(x[start : start + 32])
+    model.predict(x[:5])  # allowed here; caches a covariance from 96 rows
+    assert laplace.recompute_covariance is False
+    with torch.no_grad():
+        model(x[96:num_data])  # the epoch's last batch
+    assert laplace.recompute_covariance is True
+    model.eval()
+    out = model.predict(x[:5])
+    covariance = laplace.covariance.clone()
+    laplace.recompute_covariance = True  # force a recompute from the full precision
+    reference = model.predict(x[:5])
+    assert torch.equal(laplace.covariance, covariance)
+    _assert_same_output(out, reference)

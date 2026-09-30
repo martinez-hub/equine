@@ -410,6 +410,9 @@ class _Laplace(torch.nn.Module):
         if self.training:
             precision_minibatch = k.t() @ k
             self.precision += precision_minibatch
+            # A covariance cached by an eval-mode forward (predict is allowed
+            # mid-epoch) no longer matches the precision matrix.
+            self.recompute_covariance = True
             self.seen_data += x.shape[0]
             self._seen_count += x.shape[0]
 

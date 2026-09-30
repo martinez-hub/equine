@@ -10,7 +10,10 @@
   prediction is the same in either mode and a hand-written fine-tune loop can
   call `predict` between epochs; `EquineGP.predict` after `model.train()` no
   longer accumulates into the Laplace precision matrix (which used to raise
-  `Did not reset precision matrix at start of epoch`). Every submodule's mode
+  `Did not reset precision matrix at start of epoch`), and a training-mode
+  forward marks the cached Laplace covariance stale, so a `predict` issued
+  mid-epoch does not freeze a covariance that later eval-mode predictions
+  would reuse. Every submodule's mode
   is restored individually, so an embedding frozen for fine-tuning
   (`model.train(); model.embedding_model.eval()`, keeping BatchNorm statistics
   and dropout fixed) is still frozen after the call, as is any other mix the
