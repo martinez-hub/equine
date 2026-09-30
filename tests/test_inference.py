@@ -53,11 +53,6 @@ def _gp():
 _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", "gp"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#173/#182: predict embeds X twice today (compute_embeddings then forward)",
-)
 @_BUILDERS
 def test_predict_embeds_once(build):
     model, emb, x, _ = build()
@@ -66,11 +61,6 @@ def test_predict_embeds_once(build):
     assert emb.calls == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#182: predict runs outside torch.no_grad(); outputs carry a grad_fn today",
-)
 @_BUILDERS
 def test_predict_outputs_carry_no_autograd(build):
     model, _, x, _ = build()
@@ -89,11 +79,6 @@ def test_predict_outputs_are_plain_tensors_usable_in_autograd(build):
     (leaf * 2).sum().backward()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#212: update_support embeds the support twice today (2 * CLASSES = 6 calls)",
-)
 def test_gp_update_support_embeds_once_per_class():
     model, emb, x, y = _gp()
     emb.calls = 0
@@ -101,11 +86,6 @@ def test_gp_update_support_embeds_once_per_class():
     assert emb.calls == CLASSES
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#173: update_support embeds the calibration set twice today (2 + CLASSES = 5 calls)",
-)
 def test_protonet_update_support_embeds_calibration_set_once():
     """One pass over the calibration set plus one per support class."""
     model, emb, x, y = _protonet()

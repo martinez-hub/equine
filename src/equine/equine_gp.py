@@ -369,6 +369,24 @@ class _Laplace(torch.nn.Module):
             If the model is in evaluation mode, returns a tuple containing the predicted mean of shape (batch_size, 1)
             and the predicted covariance matrix of shape (batch_size, batch_size).
         """
+        return self._forward_with_features(x)[0]
+
+    def _forward_with_features(
+        self, x: torch.Tensor
+    ) -> tuple[Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]], torch.Tensor]:
+        """
+        ``forward`` that also returns the random Fourier features it computed.
+
+        The features are the output of ``rff`` (feature_extractor -> jl ->
+        normalize -> rff), the same tensor ``EquineGP.compute_embeddings``
+        returns, so a caller needing both logits and embeddings runs the
+        embedding model once (#173).
+
+        Returns
+        -------
+        tuple
+            ``(forward(x), features)``.
+        """
         f = self.feature_extractor(x)
         f_reduc = self.jl(f)
         if self.normalize_gp_features:
@@ -408,11 +426,11 @@ class _Laplace(torch.nn.Module):
                 pred_cov = k @ ((self.covariance @ k.t()) * self.ridge_penalty)
 
             if self.mean_field_factor is None:
-                return pred, pred_cov
+                return (pred, pred_cov), k
             else:
                 pred = self.mean_field_logits(pred, pred_cov, self.mean_field_factor)
 
-        return pred
+        return pred, k
 
 
 _DEFAULT_NUM_RANDOM_FEATURES = 1024
@@ -775,15 +793,18 @@ class EquineGP(Equine):
         torch.Tensor
             Tensors of prototypes for each of the given classes in the support.
         """
-        # Compute support embeddings
-        support_embeddings = OrderedDict().fromkeys(self.support.keys())
-        for label in self.support:
-            support_embeddings[label] = self.compute_embeddings(self.support[label])
+        # Reuse the support embeddings when update_support already computed
+        # them for this support (#212); otherwise (the load path) compute and
+        # keep them, so the support is embedded once either way.
+        if self.support_embeddings.keys() != self.support.keys():
+            self.support_embeddings = OrderedDict(
+                (label, self.compute_embeddings(x)) for label, x in self.support.items()
+            )
 
         # Compute prototype for each class
         proto_list = []
         for label in self.support:  # look at doing functorch
-            class_prototype = torch.mean(support_embeddings[label], dim=0)  # type: ignore
+            class_prototype = torch.mean(self.support_embeddings[label], dim=0)
             proto_list.append(class_prototype)
 
         prototypes = torch.stack(proto_list)
@@ -886,9 +907,18 @@ class EquineGP(Equine):
         torch.Tensor
             Output probabilities computed.
         """
+        logits, _ = self._forward_with_embeddings(X)
+        return logits
+
+    def _forward_with_embeddings(
+        self, X: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``forward`` that also returns the embeddings (``compute_embeddings(X)``) from the same pass (#173)."""
         X = self._input_to_model(X)
-        preds = self.model(X)
-        return preds / self.temperature.to(self.device)
+        logits, embeddings = self.model._forward_with_features(X)
+        logits = cast(torch.Tensor, logits)  # mean_field_factor is always set
+        temperature = cast(torch.Tensor, self.temperature)  # registered buffer
+        return logits / temperature, embeddings
 
     @icontract.ensure(
         lambda result: all((0 <= result.ood_scores) & (result.ood_scores <= 1.0))
@@ -909,18 +939,20 @@ class EquineGP(Equine):
         EquineOutput
             Output object containing prediction probabilities and OOD scores.
         """
-        X = self._input_to_model(X)
-        logits = self(X)
-        preds = torch.softmax(logits, dim=1)
-        equiprobable = (
-            torch.ones(self.num_outputs, device=logits.device) / self.num_outputs
-        )
-        max_entropy = torch.sum(_entr(equiprobable))
-        ood_score = torch.sum(_entr(preds), dim=1) / max_entropy
-        embeddings = self.compute_embeddings(X)
+        # One embedding pass and no autograd graph (#173, #182). no_grad, not
+        # inference_mode: the outputs stay ordinary tensors a caller can feed
+        # into autograd.
+        with torch.no_grad():
+            logits, embeddings = self._forward_with_embeddings(X)
+            preds = torch.softmax(logits, dim=1)
+            equiprobable = (
+                torch.ones(self.num_outputs, device=logits.device) / self.num_outputs
+            )
+            max_entropy = torch.sum(_entr(equiprobable))
+            ood_score = torch.sum(_entr(preds), dim=1) / max_entropy
         eq_out = EquineOutput(
             classes=preds, ood_scores=ood_score, embeddings=embeddings
-        )  # TODO return embeddings
+        )
 
         self.validate_feature_label_names(X.shape[-1], self.num_outputs)
 
