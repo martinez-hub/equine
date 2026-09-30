@@ -660,6 +660,10 @@ class EquineGP(Equine):
         dict[str, Any]
             A dict containing a dict of summary stats and a dataloader for the calibration data.
 
+        Notes
+        -----
+        Training and eval mode are toggled on this wrapper (which propagates
+        to the inner module), so the model is left in eval mode afterwards.
         """
 
         self.validate_feature_label_names(dataset[0][0].shape[-1], self.num_outputs)
@@ -684,7 +688,7 @@ class EquineGP(Equine):
             val_metrics_outputs = [[] for i in range(len(list(val_metrics)))]
 
         for _ in tqdm(range(num_epochs)):
-            self.model.train()
+            self.train()  # wrapper and inner module together (#209)
             self.model.reset_precision_matrix()
             epoch_loss = 0.0
             for i, (xs, labels) in enumerate(train_loader):
@@ -698,7 +702,7 @@ class EquineGP(Equine):
                 epoch_loss += loss.item()
             if scheduler is not None:
                 scheduler.step()
-            self.model.eval()
+            self.eval()
             # compute the validation metrics
             if (
                 validation_dataset is not None
@@ -943,6 +947,11 @@ class EquineGP(Equine):
         """
         Predict function for EquineGP, inherited and implemented from Equine.
 
+        Switches the model to eval mode (``self.eval()``) before computing
+        anything: in training mode the inner Laplace layer accumulates every
+        batch into its precision matrix, so a prediction made after
+        ``model.train()`` used to corrupt it (#209).
+
         Parameters
         ----------
         X : torch.Tensor
@@ -958,6 +967,7 @@ class EquineGP(Equine):
             no autograd graph but are ordinary tensors (not inference-mode
             tensors), so a caller can still use them in autograd.
         """
+        self.eval()
         # One embedding pass and no autograd graph (#173, #182). no_grad, not
         # inference_mode: the outputs stay ordinary tensors a caller can feed
         # into autograd.

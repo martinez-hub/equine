@@ -453,6 +453,10 @@ class Protonet(torch.nn.Module):
         """
         Method to update the support examples, and all the calculations that rely on them.
 
+        The global moments of the support embeddings (used for the OOD score)
+        are computed in both modes (#179). The covariance type depends on the
+        mode: ``PRED_COV_TYPE`` in eval mode, ``cov_type`` in training mode.
+
         Parameters
         ----------
         support : OrderedDict
@@ -474,9 +478,9 @@ class Protonet(torch.nn.Module):
         )
 
         self.prototypes: torch.Tensor = self.compute_prototypes()
+        self.compute_global_moments()
 
         if self.training is False:
-            self.compute_global_moments()
             self.covariance: torch.Tensor = self.compute_covariance(
                 cov_type=PRED_COV_TYPE
             )
@@ -847,6 +851,10 @@ class EquineProtonet(Equine):
     def predict(self, X: torch.Tensor) -> EquineOutput:
         """Predict function for EquineProtonet, inherited and implemented from Equine.
 
+        Switches the model to eval mode (``self.eval()``) before computing
+        anything, so a prediction is the same whatever mode the caller left
+        the model in (#209).
+
         Parameters
         ----------
         X : torch.Tensor
@@ -862,6 +870,7 @@ class EquineProtonet(Equine):
             no autograd graph but are ordinary tensors (not inference-mode
             tensors), so a caller can still use them in autograd.
         """
+        self.eval()
         # One embedding pass and no autograd graph (#173, #182). no_grad, not
         # inference_mode: the outputs stay ordinary tensors a caller can feed
         # into autograd.
@@ -887,6 +896,11 @@ class EquineProtonet(Equine):
     ) -> None:
         """Function to update protonet support examples with given examples.
 
+        Switches the model to eval mode (``self.eval()``) first: the support
+        covariance and the OOD calibration are inference-time quantities, and
+        this makes the method usable on a freshly constructed model, which
+        ``torch.nn.Module`` leaves in training mode (#179).
+
         Parameters
         ----------
         support_x : torch.Tensor
@@ -902,7 +916,7 @@ class EquineProtonet(Equine):
         -------
         None
         """
-
+        self.eval()
         support_x, calib_x, support_y, calib_y = stratified_train_test_split(
             support_x, support_y, test_size=calib_frac
         )

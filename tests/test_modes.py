@@ -20,13 +20,6 @@ from golden_data import CLASSES, FEATURES, separable_dataset
 
 import equine as eq
 
-_MODE_BUGS = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, AttributeError),
-    reason="#209/#179: today the Protonet stays in training mode after "
-    "predict(); the GP raises 'Did not reset precision matrix at start of epoch'",
-)
-
 
 def _protonet():
     torch.manual_seed(0)
@@ -64,13 +57,6 @@ def _gp():
 _BUILDERS = pytest.mark.parametrize("build", [_protonet, _gp], ids=["protonet", "gp"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AttributeError,
-    reason="#179: today AttributeError: 'Protonet' object has no attribute "
-    "'global_mean' (a fresh model is in training mode, where "
-    "Protonet.update_support skips the global moments)",
-)
 def test_protonet_update_support_on_untrained_model():
     """A freshly constructed EquineProtonet accepts a support set (#179)."""
     torch.manual_seed(0)
@@ -81,12 +67,6 @@ def test_protonet_update_support_on_untrained_model():
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#179: today Protonet.update_support in training mode leaves the "
-    "stale global_mean from train_model in place (only eval mode recomputes it)",
-)
 def test_protonet_update_support_in_train_mode_computes_global_moments():
     """The inner Protonet recomputes the global moments in training mode too (#179).
 
@@ -106,13 +86,6 @@ def test_protonet_update_support_in_train_mode_computes_global_moments():
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#209: today the first predict() after train() accumulates into the "
-    "precision matrix and raises 'Did not reset precision matrix at start "
-    "of epoch' (seen_data already equals num_data after train_model)",
-)
 def test_gp_predict_after_train_mode_does_not_touch_precision():
     """predict() after model.train() leaves the Laplace buffers alone (#209)."""
     model, x, _ = _gp()
@@ -125,12 +98,6 @@ def test_gp_predict_after_train_mode_does_not_touch_precision():
     torch.testing.assert_close(model.model.seen_data, seen_data, atol=0, rtol=0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#209: today EquineGP.train_model toggles only the inner _Laplace; "
-    "the wrapper stays in training mode (wrapper True, inner False)",
-)
 def test_gp_train_model_leaves_wrapper_and_inner_in_eval():
     model, _, _ = _gp()
     assert model.training is False
@@ -143,11 +110,9 @@ def test_protonet_train_model_leaves_wrapper_and_inner_in_eval():
     assert model.model.training is False
 
 
-@_MODE_BUGS
 @_BUILDERS
 def test_predict_leaves_model_in_eval(build):
-    """predict() switches the model to eval mode (today: the Protonet stays in
-    training mode; the GP raises 'Did not reset precision matrix')."""
+    """predict() switches the wrapper and the inner module to eval mode (#209)."""
     model, x, _ = build()
     model.train()
     assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
