@@ -1048,7 +1048,10 @@ class EquineProtonet(Equine):
         ------
         ValueError
             If the file cannot be loaded safely, names an unregistered
-            architecture, or contains executable content without trust.
+            architecture, or contains executable content without trust. If
+            ``device`` is unavailable here, names an index at or above its
+            device count, or lacks a dtype the file holds (float64 on MPS:
+            load such a file with ``device="cpu"``).
         """
         # map_location so internal tensors map to the correct device
         model_save = load_checkpoint(

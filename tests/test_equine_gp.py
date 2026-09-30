@@ -309,12 +309,24 @@ def test_validation_metrics_are_reset_between_epochs() -> None:
 
 
 def test_device_type_is_deprecated_alias() -> None:
+    torch.manual_seed(0)
+    dataset, x, _ = separable_dataset()
     model = eq.EquineGP(
         BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, CLASSES, num_random_features=16
+    )
+    model.train_model(
+        dataset,
+        torch.nn.CrossEntropyLoss(),
+        torch.optim.SGD(model.parameters(), lr=0.05),
+        num_epochs=1,
+        batch_size=32,
     )
     with pytest.warns(DeprecationWarning, match="device_type"):
         assert model.device_type == "cpu"
     assert model.device == "cpu"
+    # Assigning a value the model does not already have: the setter changes
+    # ``device`` and moves the module with it, so predict keeps working.
     with pytest.warns(DeprecationWarning, match="device_type"):
-        model.device_type = "cpu"
-    assert model.device == "cpu"
+        model.device_type = "cpu:0"
+    assert model.device == "cpu:0"
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)

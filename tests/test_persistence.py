@@ -27,6 +27,7 @@ from conftest import (
     assert_on_device,
     available_devices,
 )
+from golden_data import trained_protonet
 
 import equine as eq
 import equine.equine_gp
@@ -243,6 +244,68 @@ def test_requested_unavailable_device_is_refused(tmp_path, train, cls) -> None:
             ValueError, match="The requested device .* is not available on this machine"
         ):
             loader(path, device="cuda")
+
+
+@pytest.mark.parametrize("train, cls", TRAINERS)
+def test_requested_device_index_is_validated(tmp_path, train, cls) -> None:
+    """A device ordinal is checked against this machine's device count up front."""
+    model, X = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    for loader in (cls.load, eq.load_equine_model):
+        reloaded = loader(path, device="cpu:0")  # index 0 is always the CPU
+        assert reloaded.device == "cpu:0"
+        assert_same(model, reloaded, X)
+
+
+@pytest.mark.parametrize("train, cls", TRAINERS)
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.device_count() >= 8,
+    reason="needs a machine with CUDA and fewer than 8 GPUs",
+)
+def test_requested_cuda_index_out_of_range_is_refused(tmp_path, train, cls) -> None:
+    model, _ = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    for loader in (cls.load, eq.load_equine_model):
+        with pytest.raises(ValueError, match="names device index 7"):
+            loader(path, device="cuda:7")
+
+
+@pytest.mark.accelerator
+@pytest.mark.parametrize("train, cls", TRAINERS)
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_requested_mps_index_is_validated(tmp_path, train, cls) -> None:
+    """MPS exposes one device: ``mps:0`` loads, ``mps:1`` is refused before the file is read."""
+    model, X = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    for loader in (cls.load, eq.load_equine_model):
+        with pytest.raises(ValueError, match="names device index 1"):
+            loader(path, device="mps:1")
+        reloaded = loader(path, device="mps:0")
+        assert reloaded.device == "mps:0"
+        expected, actual = model.predict(X[:8]), reloaded.predict(X[:8])
+        torch.testing.assert_close(
+            actual.classes.cpu(), expected.classes, atol=1e-4, rtol=0
+        )
+        torch.testing.assert_close(
+            actual.ood_scores.cpu(), expected.ood_scores, atol=1e-4, rtol=0
+        )
+
+
+@pytest.mark.accelerator
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_float64_file_is_refused_clearly_on_mps(tmp_path) -> None:
+    """MPS has no float64: a file holding float64 tensors is a ValueError naming the dtype, not a torch TypeError."""
+    model = trained_protonet()  # built and trained in float64 on the CPU
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    for loader in (eq.EquineProtonet.load, eq.load_equine_model):
+        with pytest.raises(
+            ValueError, match="float64 tensor, which mps does not support"
+        ):
+            loader(path, device="mps")
 
 
 _ACCELERATOR = next((d for d in available_devices() if d != "cpu"), None)
@@ -1635,8 +1698,12 @@ def test_a_device_this_machine_lacks_is_refused(tmp_path, train, cls) -> None:
     for loader in (cls.load, eq.load_equine_model):
         with pytest.raises(ValueError, match="not available on this machine"):
             loader(path)
-    if cls is eq.EquineProtonet:  # the caller's device= replaces the file's
-        assert_same(model, eq.EquineProtonet.load(path, device="cpu"), X)
+    for loader in (cls.load, eq.load_equine_model):
+        reloaded = loader(
+            path, device="cpu"
+        )  # the caller's device= replaces the file's
+        assert reloaded.device == "cpu"
+        assert_same(model, reloaded, X)
 
 
 @pytest.mark.parametrize("train, cls", TRAINERS)

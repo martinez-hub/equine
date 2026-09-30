@@ -200,8 +200,9 @@ def load_checkpoint(
         (memory-mapped on the safe path) and then moved to ``map_location`` if
         it is given; with None they stay on the CPU, whatever device they were
         saved from. Both the safe and the legacy path follow this. It must
-        name the CPU or an accelerator available on this machine (``meta``
-        holds no data); anything else is refused before the file is opened.
+        name the CPU or an accelerator available on this machine, with an
+        index below its device count (``meta`` holds no data); anything else
+        is refused before the file is opened.
     allow_unsafe_legacy_format : bool, optional
         If the safe load fails, fall back to ``weights_only=False`` with a
         ``UserWarning``. This can execute arbitrary code embedded in the file,
@@ -224,8 +225,10 @@ def load_checkpoint(
     Raises
     ------
     ValueError
-        If ``map_location`` names a device this machine cannot build on. If
-        the file cannot be loaded safely and ``allow_unsafe_legacy_format``
+        If ``map_location`` names a device this machine cannot build on (an
+        unavailable accelerator, an index at or above its device count, or
+        ``meta``), or an accelerator without a dtype the file holds (float64
+        on MPS). If the file cannot be loaded safely and ``allow_unsafe_legacy_format``
         is False (restricted unpickling refuses it, torch < 2.6 is installed,
         it is not a zip archive, or its support/KDE tensors alias one
         another). Whatever the flag: if it is a zip archive with compressed
@@ -534,6 +537,13 @@ def _copy_off_the_file(
     its tensors are re-pointed in place, so views and tied tensors keep
     sharing, containers are untouched, and the copies add up to no more than
     the storages already checked.
+
+    Raises
+    ------
+    ValueError
+        If ``map_location`` names an accelerator that does not support a
+        tensor's dtype (MPS has no float64; a file saved from a float64 model,
+        or holding float64 support, loads there only with ``device="cpu"``).
     """
     device = torch.device(map_location if map_location is not None else "cpu")
     copies: dict[tuple[int, int], torch.UntypedStorage] = {}
@@ -557,9 +567,16 @@ def _copy_off_the_file(
             if device.type == "cpu":
                 tensor.set_(*layout)
             else:
-                tensor.data = torch.empty(0, dtype=tensor.dtype, device=device).set_(
-                    *layout
-                )
+                try:
+                    tensor.data = torch.empty(
+                        0, dtype=tensor.dtype, device=device
+                    ).set_(*layout)
+                except (TypeError, RuntimeError) as err:
+                    raise ValueError(
+                        f"Model file holds a {str(tensor.dtype).removeprefix('torch.')} "
+                        f"tensor, which {device.type} does not support; load it with "
+                        "device='cpu'"
+                    ) from err
 
 
 def _jit_archive_to_tensor(buffer: io.BytesIO) -> torch.Tensor:
@@ -793,8 +810,11 @@ def _require_device(
     Refuse a file's ``settings["device"]`` unless this machine can build on it.
 
     It must name a torch device that is the CPU or an accelerator available
-    here; ``meta`` (no data) is refused. ``hint`` is appended to the message
-    for an unavailable device. ``what`` opens every message and names the
+    here, with an index below that accelerator's device count when it has
+    one (``cuda:7`` on a one-GPU machine, or ``mps:1``, is refused; torch
+    would otherwise fail deep inside the load, or silently use device 0);
+    ``meta`` (no data) is refused. ``hint`` is appended to the message for an
+    unavailable device or index. ``what`` opens every message and names the
     value being checked (``load_checkpoint`` passes "The requested device"
     for a caller's ``map_location``).
     """
@@ -822,6 +842,13 @@ def _require_device(
         raise ValueError(
             f"{what} ({_shown(value)}) is not available on this machine{hint}."
         )
+    if device.index is not None:
+        count = getattr(torch.get_device_module(device.type), "device_count", None)
+        if count is not None and device.index >= count():
+            raise ValueError(
+                f"{what} ({_shown(value)}) names device index {device.index}, but "
+                f"this machine has {count()} {device.type} device(s){hint}."
+            )
 
 
 def _int_label(label: Any) -> Optional[int]:

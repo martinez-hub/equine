@@ -542,13 +542,22 @@ class EquineGP(Equine):
 
     @device_type.setter
     def device_type(self, value: str) -> None:
-        """Deprecated: assigns ``device`` (as before, without moving the module)."""
+        """
+        Deprecated: assigns ``device`` and moves the module there.
+
+        Before 0.1.9 ``device_type`` was a plain attribute read only by
+        ``save()``: assigning it changed the device recorded in the file and
+        neither where inputs were placed nor where the module lived. Now
+        ``device`` decides where inputs go, so the module moves with it to
+        stay consistent (``model.to(value)`` is what a caller should write).
+        """
         warnings.warn(
             "EquineGP.device_type is deprecated; use EquineGP.device (a str)",
             DeprecationWarning,
             stacklevel=2,
         )
         self.device = value
+        self.to(value)
 
     def train_model(
         self,
@@ -1007,7 +1016,10 @@ class EquineGP(Equine):
         ------
         ValueError
             If the file cannot be loaded safely, names an unregistered
-            architecture, or contains executable content without trust.
+            architecture, or contains executable content without trust. If
+            ``device`` is unavailable here, names an index at or above its
+            device count, or lacks a dtype the file holds (float64 on MPS:
+            load such a file with ``device="cpu"``).
         """
         # map_location so internal tensors map to the correct device
         model_save = load_checkpoint(

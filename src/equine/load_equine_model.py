@@ -56,7 +56,10 @@ def load_equine_model(
     ValueError
         If the model type is missing or unknown, the file cannot be loaded
         safely, its recipe names an unregistered architecture, or it contains
-        executable content without ``trust_executable``.
+        executable content without ``trust_executable``. If ``device`` is
+        unavailable here, names an index at or above its device count, or
+        lacks a dtype the file holds (float64 on MPS: load such a file with
+        ``device="cpu"``).
 
     Notes
     -----

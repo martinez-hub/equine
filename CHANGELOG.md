@@ -19,8 +19,12 @@
   is a `str` like `EquineProtonet.device`; `EquineGP.device_type` is deprecated
   and removed in the next release. `EquineGP.load` and `load_equine_model`
   accept `device=` (positional second argument) like `EquineProtonet.load`;
-  an explicit device is checked before the file is read, and `meta` or an
-  unavailable device raises `ValueError`. On MPS, which has no
+  an explicit device is checked before the file is read, and `meta`, an
+  unavailable device or an index at or above the device count (`cuda:7` on a
+  one-GPU machine, `mps:1`) raises `ValueError`; so does loading a file
+  whose tensors have a dtype the device lacks (float64 on MPS), naming the
+  dtype. Assigning the deprecated `EquineGP.device_type` moves the module
+  with `device`. On MPS, which has no
   `cholesky_inverse` kernel, the GP covariance is computed through a CPU round
   trip; CPU and CUDA results are unchanged. Files saved after training on an
   accelerator hold accelerator tensors; pass `device="cpu"` when loading them
