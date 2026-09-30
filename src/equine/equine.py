@@ -2,6 +2,7 @@
 # Subject to FAR 52.227-11 – Patent Rights – Ownership by the Contractor (May 2014).
 # SPDX-License-Identifier: MIT
 
+import contextlib
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import Any, Optional, TypeVar
@@ -11,6 +12,25 @@ import torch
 from torch.utils.data import TensorDataset
 
 from .equine_output import EquineOutput
+
+
+@contextlib.contextmanager
+def _eval_mode(module: torch.nn.Module):
+    """Run the body with ``module`` in eval mode, then restore its previous mode.
+
+    The inference entry points (``predict``, ``update_support``) compute
+    eval-mode quantities but must not change the mode the caller left the
+    model in (#209, #179). ``module.train(was_training)`` propagates to the
+    submodules, so a mixed wrapper/inner mode (only reachable through
+    ``model.model.train()``) is flattened to the wrapper's flag.
+    """
+    was_training = module.training
+    module.eval()
+    try:
+        yield
+    finally:
+        module.train(was_training)
+
 
 # A type variable for Equine objects
 AnyEquine = TypeVar("AnyEquine", bound="Equine")

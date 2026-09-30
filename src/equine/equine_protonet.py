@@ -19,7 +19,7 @@ from scipy.stats import gaussian_kde
 from torch.utils.data import TensorDataset
 from tqdm import tqdm
 
-from .equine import Equine, EquineOutput
+from .equine import Equine, EquineOutput, _eval_mode
 from .registry import _positive_int, _truncate
 from .utils import (
     EQUINE_FORMAT_VERSION,
@@ -454,7 +454,8 @@ class Protonet(torch.nn.Module):
         Method to update the support examples, and all the calculations that rely on them.
 
         The global moments of the support embeddings (used for the OOD score)
-        are computed in both modes (#179). The covariance type depends on the
+        are computed whatever mode the caller left the model in (via
+        ``train()``/``eval()``) (#179). The covariance type depends on the
         mode: ``PRED_COV_TYPE`` in eval mode, ``cov_type`` in training mode.
 
         Parameters
@@ -851,9 +852,11 @@ class EquineProtonet(Equine):
     def predict(self, X: torch.Tensor) -> EquineOutput:
         """Predict function for EquineProtonet, inherited and implemented from Equine.
 
-        Switches the model to eval mode (``self.eval()``) before computing
-        anything, so a prediction is the same whatever mode the caller left
-        the model in (#209).
+        Computes in eval mode and leaves the model in the mode the caller had
+        it in (via ``train()``/``eval()``), so a prediction is the same
+        whatever mode the caller left the model in (#209). A mixed
+        wrapper/inner mode (only reachable via ``model.model.train()``) is
+        flattened to the wrapper's flag.
 
         Parameters
         ----------
@@ -870,11 +873,10 @@ class EquineProtonet(Equine):
             no autograd graph but are ordinary tensors (not inference-mode
             tensors), so a caller can still use them in autograd.
         """
-        self.eval()
         # One embedding pass and no autograd graph (#173, #182). no_grad, not
         # inference_mode: the outputs stay ordinary tensors a caller can feed
         # into autograd.
-        with torch.no_grad():
+        with _eval_mode(self), torch.no_grad():
             preds, dists, X_embed = self.model._forward_with_embeddings(X)
             if self.use_temperature:
                 dists = dists / self.temperature
@@ -896,10 +898,13 @@ class EquineProtonet(Equine):
     ) -> None:
         """Function to update protonet support examples with given examples.
 
-        Switches the model to eval mode (``self.eval()``) first: the support
-        covariance and the OOD calibration are inference-time quantities, and
-        this makes the method usable on a freshly constructed model, which
-        ``torch.nn.Module`` leaves in training mode (#179).
+        The support covariance and the OOD calibration are inference-time
+        quantities: this computes in eval mode and leaves the model in the
+        mode the caller had it in (via ``train()``/``eval()``), which makes it
+        usable on a freshly constructed model, which ``torch.nn.Module``
+        leaves in training mode (#179). A mixed wrapper/inner mode (only
+        reachable via ``model.model.train()``) is flattened to the wrapper's
+        flag.
 
         Parameters
         ----------
@@ -916,31 +921,31 @@ class EquineProtonet(Equine):
         -------
         None
         """
-        self.eval()
-        support_x, calib_x, support_y, calib_y = stratified_train_test_split(
-            support_x, support_y, test_size=calib_frac
-        )
-        labels, counts = torch.unique(support_y, return_counts=True)
-        if label_names is not None:
-            self.label_names = label_names
-        self.validate_feature_label_names(support_x.shape[-1], labels.shape[0])
-
-        support = OrderedDict()
-        for label, count in list(zip(labels.tolist(), counts.tolist())):
-            class_support = generate_support(
-                support_x,
-                support_y,
-                support_size=count,
-                selected_labels=[label],
+        with _eval_mode(self):
+            support_x, calib_x, support_y, calib_y = stratified_train_test_split(
+                support_x, support_y, test_size=calib_frac
             )
-            support.update(class_support)
+            labels, counts = torch.unique(support_y, return_counts=True)
+            if label_names is not None:
+                self.label_names = label_names
+            self.validate_feature_label_names(support_x.shape[-1], labels.shape[0])
 
-        self.model.update_support(support)
+            support = OrderedDict()
+            for label, count in list(zip(labels.tolist(), counts.tolist())):
+                class_support = generate_support(
+                    support_x,
+                    support_y,
+                    support_size=count,
+                    selected_labels=[label],
+                )
+                support.update(class_support)
 
-        preds, dists, X_embed = self.model._forward_with_embeddings(calib_x)
-        ood_dists = self._compute_ood_dist(X_embed, preds, dists)
+            self.model.update_support(support)
 
-        self._fit_outlier_scores(ood_dists, calib_y)
+            preds, dists, X_embed = self.model._forward_with_embeddings(calib_x)
+            ood_dists = self._compute_ood_dist(X_embed, preds, dists)
+
+            self._fit_outlier_scores(ood_dists, calib_y)
 
     @icontract.require(lambda self: len(self.model.support) > 0)
     def get_support(self) -> OrderedDict[int, torch.Tensor]:
