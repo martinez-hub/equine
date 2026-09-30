@@ -6,7 +6,7 @@
 
 **Architecture:** Four stacked PRs (roadmap PR-2a to PR-2d) on top of Stack 1 (`stack1/pr-1e-ci-tooling`, tip 54d9181). PR-2a adds device-parametrized tests with strict expected failures for exactly what fails today; PR-2b fixes device placement and adds `device` to the GP and generic loaders; PR-2c collapses the double embedding pass and disables autograd at inference; PR-2d fixes mode handling. Each fixing layer flips the corresponding expected failures.
 
-**Tech Stack:** PyTorch 2.6–2.9 (MPS has no float64 and no `cholesky_inverse` kernel; `cholesky`, `cholesky_ex`, `linalg.inv`, `linalg.solve` exist, except that 2.6 also lacks `cholesky`, `cholesky_ex` and `special.entr`; so the GP inverts and takes the entropy on the CPU for MPS), beartype on both classes, icontract, pytest with hypothesis and xdist. CI is Ubuntu-only with no accelerator, so every accelerator test is skipped there; the MPS proof happens on the maintainer's M1.
+**Tech Stack:** PyTorch 2.6–2.9 (MPS has no float64, and no `cholesky_inverse` kernel on any of 2.6–2.9; `linalg.inv` exists on all of them and `linalg.svd` falls back to the CPU automatically with a warning; `cholesky`, `cholesky_ex`, `linalg.solve` and `special.entr` exist from 2.7 but are missing on 2.6; so the GP inverts and takes the entropy on the CPU for MPS), beartype on both classes, icontract, pytest with hypothesis and xdist. CI is Ubuntu-only with no accelerator, so every accelerator test is skipped there; the MPS proof happens on the maintainer's M1.
 
 **Facts established on 2026-09-29 (torch 2.9.1, M1, MPS available):**
 

@@ -301,6 +301,41 @@ def test_gp_inverse_and_entropy_helpers_return_to_the_device(device):
     torch.testing.assert_close(entropy.cpu(), torch.special.entr(p.cpu()))
 
 
+@pytest.mark.accelerator
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_gp_on_mps_survives_the_kernels_torch_2_6_lacks(monkeypatch):
+    """Simulates torch 2.6 on current torch: no MPS ``linalg.cholesky_ex`` or ``special.entr``.
+
+    Each op raises NotImplementedError for an MPS tensor, as torch 2.6 does,
+    and runs normally otherwise; a GP trained and queried on MPS must still
+    work, which it does only because ``_inverse_via_cholesky`` and ``_entr``
+    hand those ops CPU copies.
+    """
+    called_on: list[str] = []
+
+    def without_mps_kernel(real, name):
+        def op(x, *args, **kwargs):
+            if x.device.type == "mps":
+                raise NotImplementedError(f"{name} has no MPS kernel (torch 2.6)")
+            called_on.append(f"{name}:{x.device.type}")
+            return real(x, *args, **kwargs)
+
+        return op
+
+    monkeypatch.setattr(
+        torch.linalg,
+        "cholesky_ex",
+        without_mps_kernel(torch.linalg.cholesky_ex, "cholesky_ex"),
+    )
+    monkeypatch.setattr(
+        torch.special, "entr", without_mps_kernel(torch.special.entr, "entr")
+    )
+    model, x, _ = _gp("mps")
+    assert_on_device(model, "mps")
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
+    assert set(called_on) == {"cholesky_ex:cpu", "entr:cpu"}
+
+
 def test_gp_inverse_on_the_cpu_is_the_plain_cholesky_inverse():
     """On the CPU the helper is exactly ``cholesky_ex`` then ``cholesky_inverse`` (goldens)."""
     torch.manual_seed(0)

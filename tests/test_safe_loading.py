@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from conftest import BasicEmbeddingModel, _rewrite_zip
+from conftest import BasicEmbeddingModel, _rewrite_zip, assert_on_device
 from golden_data import trained_gp, trained_protonet
 
 import equine as eq
@@ -446,25 +446,39 @@ def test_legacy_file_with_aliased_support_migrates(
     )
 
 
-def test_legacy_path_loads_onto_the_cpu_unless_mapped(tmp_path, monkeypatch) -> None:
-    """Both paths honour "CPU unless map_location": the legacy torch.load must
-    not restore the devices the tensors were saved from."""
+def test_legacy_path_unpickles_onto_the_cpu(tmp_path, monkeypatch) -> None:
+    """Both paths honour "CPU unless map_location" the same way.
+
+    The legacy ``torch.load`` always unpickles onto the CPU (never restoring
+    the devices the tensors were saved from); an accelerator ``map_location``
+    is then served by the safe path's device copy, ``_copy_off_the_file``.
+    CUDA is faked and the copy recorded, so this runs without an accelerator.
+    """
     path = str(tmp_path / "old_format.pt")
     torch.save({"a": torch.arange(4.0)}, path, _use_new_zipfile_serialization=False)
     locations: list = []
+    copies: list = []
     real_load = torch.load
 
     def spy(*args, **kwargs):
         locations.append(kwargs.get("map_location"))
-        return real_load(*args, **{**kwargs, "map_location": "cpu"})
+        return real_load(*args, **kwargs)
 
     monkeypatch.setattr(torch, "load", spy)
-    with pytest.warns(UserWarning, match="unsafe"):
-        load_checkpoint(path, allow_unsafe_legacy_format=True)
-    # "cpu:0" passes the device validation and reaches torch.load as given.
-    with pytest.warns(UserWarning, match="unsafe"):
-        load_checkpoint(path, map_location="cpu:0", allow_unsafe_legacy_format=True)
-    assert locations == ["cpu", "cpu:0"]
+    monkeypatch.setattr(
+        equine.utils,
+        "_copy_off_the_file",
+        lambda tensors, map_location: copies.append((len(tensors), map_location)),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    for map_location in (None, "cpu:0", "cuda"):
+        with pytest.warns(UserWarning, match="unsafe"):
+            load_checkpoint(
+                path, map_location=map_location, allow_unsafe_legacy_format=True
+            )
+    assert locations == ["cpu", "cpu", "cpu"]
+    assert copies == [(1, "cuda")]  # the CPU needs no copy
 
 
 # The transition's FutureWarning is asserted in its own test.
@@ -865,27 +879,39 @@ def test_legacy_path_does_not_restore_the_saved_device(tmp_path) -> None:
     assert loaded["a"].device.type == "cpu"
 
 
+_LEGACY_FLOAT64_CASES = [
+    pytest.param(trained_protonet, _write_legacy_protonet_file, id="protonet"),
+    pytest.param(trained_gp, _write_legacy_gp_file, id="gp"),
+]
+
+
 @pytest.mark.accelerator
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
-@pytest.mark.parametrize(
-    "train, write_legacy",
-    [
-        pytest.param(trained_protonet, _write_legacy_protonet_file, id="protonet"),
-        pytest.param(trained_gp, _write_legacy_gp_file, id="gp"),
-    ],
-)
+@pytest.mark.parametrize("train, write_legacy", _LEGACY_FLOAT64_CASES)
 def test_float64_legacy_file_is_refused_clearly_on_mps(
-    tmp_path, train, write_legacy
+    tmp_path, monkeypatch, train, write_legacy
 ) -> None:
     """The legacy path, like the safe one, names a dtype MPS lacks in a ValueError.
 
     Without it torch's TypeError ("Cannot convert a MPS Tensor to float64")
     escapes, on the path the migration snippet sends legacy files through.
+    The file is read twice per load: the restricted attempt, which refuses
+    it, and one unrestricted unpickle onto the CPU; the refusal comes from the
+    copy to the device.
     """
     model = train()  # built and trained in float64 on the CPU
     path = str(tmp_path / "legacy64.eq")
     write_legacy(model, path)
+    calls: list = []
+    real_load = torch.load
+
+    def spy(*args, **kwargs):
+        calls.append((kwargs.get("weights_only"), kwargs.get("map_location")))
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", spy)
     for loader in (type(model).load, eq.load_equine_model):
+        calls.clear()
         with pytest.warns(UserWarning, match="unsafe"):
             with pytest.raises(
                 ValueError,
@@ -893,14 +919,13 @@ def test_float64_legacy_file_is_refused_clearly_on_mps(
                 "device='cpu'",
             ):
                 loader(path, device="mps", allow_unsafe_legacy_format=True)
+        assert calls == [(True, "cpu"), (False, "cpu")]
 
 
 @pytest.mark.accelerator
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
-def test_legacy_load_onto_mps_reports_only_a_missing_dtype_as_one(
-    tmp_path, monkeypatch
-) -> None:
-    """A pre-1.6 (non-zip) float64 file gets the dtype ValueError; any other failure propagates."""
+def test_float64_pre_zip_file_is_refused_clearly_on_mps(tmp_path) -> None:
+    """A pre-1.6 (non-zip) file goes straight to the legacy path, with the same refusal."""
     path = str(tmp_path / "old_format.pt")
     torch.save(
         {"a": torch.arange(4.0, dtype=torch.float64)},
@@ -908,37 +933,68 @@ def test_legacy_load_onto_mps_reports_only_a_missing_dtype_as_one(
         _use_new_zipfile_serialization=False,
     )
     with pytest.warns(UserWarning, match="unsafe"):
-        with pytest.raises(ValueError, match="float64 tensor, which mps does not"):
+        with pytest.raises(
+            ValueError, match="float64 tensor, which mps does not support"
+        ):
             load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
 
-    torch.save({"a": torch.arange(4.0)}, path, _use_new_zipfile_serialization=False)
-    real_load = torch.load
 
-    def failing_off_the_cpu(*args, **kwargs):
-        if kwargs.get("map_location") != "cpu":
-            raise RuntimeError("out of device memory")
-        return real_load(*args, **kwargs)
+@pytest.mark.accelerator
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+@pytest.mark.parametrize("train, write_legacy", LEGACY_CASES)
+# The transition's FutureWarning is asserted in its own test.
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_legacy_file_loads_onto_mps_and_predicts(tmp_path, train, write_legacy) -> None:
+    """Every tensor of a legacy layout reaches the device, and the model predicts there.
 
-    monkeypatch.setattr(torch, "load", failing_off_the_cpu)
+    Both layouts hold their tensors in dicts and OrderedDicts (the support, the
+    Protonet head's and the GP's Laplace state_dicts), which the device copy
+    reaches.
+    """
+    model, X = train()  # float32, trained on the CPU
+    path = str(tmp_path / "legacy.eq")
+    write_legacy(model, path)
+
     with pytest.warns(UserWarning, match="unsafe"):
-        with pytest.raises(RuntimeError, match="out of device memory"):
-            load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
+        checkpoint = load_checkpoint(
+            path, map_location="mps", allow_unsafe_legacy_format=True
+        )
+    # (The Protonet's default head is an Identity: its state_dict is empty.)
+    held = {"support", "model_head_save", "laplace_model_save"} & set(checkpoint)
+    assert "support" in held and len(held) == 2
+    for key in held:
+        assert isinstance(checkpoint[key], dict)  # OrderedDict or dict
+        assert all(t.device.type == "mps" for t in checkpoint[key].values()), key
+    assert checkpoint["support"]
+    if "laplace_model_save" in held:
+        assert checkpoint["laplace_model_save"]
+    tensors = equine.utils._unique_tensors(checkpoint)
+    assert tensors and {t.device.type for t in tensors} == {"mps"}
 
-    # When the CPU re-read fails too, the error reported is still the device one.
-    def failing_everywhere(*args, **kwargs):
-        raise RuntimeError(f"cannot read onto {kwargs.get('map_location')}")
+    expected = model.predict(X[1:10])
+    for loader in (type(model).load, eq.load_equine_model):
+        with pytest.warns(UserWarning, match="unsafe"):
+            loaded = loader(path, device="mps", allow_unsafe_legacy_format=True)
+        assert loaded.device == "mps"
+        assert_on_device(loaded, "mps")
+        actual = loaded.predict(X[1:10])
+        torch.testing.assert_close(
+            actual.classes.cpu(), expected.classes, atol=1e-4, rtol=0
+        )
+        torch.testing.assert_close(
+            actual.ood_scores.cpu(), expected.ood_scores, atol=1e-4, rtol=0
+        )
 
-    monkeypatch.setattr(torch, "load", failing_everywhere)
-    with pytest.warns(UserWarning, match="unsafe"):
-        with pytest.raises(RuntimeError, match="cannot read onto mps"):
-            load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
 
-
-@pytest.mark.parametrize("map_location", [None, "cpu"])
-def test_legacy_load_failure_on_the_cpu_propagates_unchanged(
+@pytest.mark.parametrize("map_location", [None, "cpu", "cuda"])
+def test_legacy_load_failure_propagates_unchanged(
     tmp_path, monkeypatch, map_location
 ) -> None:
-    """Only a dtype the device lacks becomes a ValueError; the CPU lacks none."""
+    """An error from the legacy unpickle is not reported as a missing dtype.
+
+    CUDA is faked for the accelerator case: the unpickle fails before any
+    device is touched.
+    """
     path = str(tmp_path / "old_format.pt")
     torch.save({"a": torch.arange(4.0)}, path, _use_new_zipfile_serialization=False)
 
@@ -946,6 +1002,8 @@ def test_legacy_load_failure_on_the_cpu_propagates_unchanged(
         raise RuntimeError("corrupt storage")
 
     monkeypatch.setattr(torch, "load", corrupt)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
     with pytest.warns(UserWarning, match="unsafe"):
         with pytest.raises(RuntimeError, match="corrupt storage"):
             load_checkpoint(
