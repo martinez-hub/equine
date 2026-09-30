@@ -375,6 +375,34 @@ def test_protonet_train_model_accepts_float64_dataset(device):
 
 
 @pytest.mark.parametrize("device", devices())
+def test_protonet_train_model_returns_the_callers_calibration_split(device):
+    """``calib_x``/``calib_y`` come back as the caller split them, as in 0.1.8.
+
+    The copies moved to the device and cast to the model dtype are internal
+    to ``train_model``; the returned tensors stay on the CPU in the dataset's
+    dtypes, so ``result["calib_y"].numpy()`` keeps working.
+    """
+    torch.manual_seed(0)
+    _, x, y = separable_dataset()
+    model = eq.EquineProtonet(
+        BasicEmbeddingModel(FEATURES, CLASSES), CLASSES, device=device
+    )
+    result = model.train_model(
+        torch.utils.data.TensorDataset(x.double(), y),
+        num_episodes=5,
+        calib_frac=0.2,
+        support_size=10,
+        way=3,
+        episode_size=30,
+    )
+    assert set(result) == {"train_summary", "calib_x", "calib_y"}
+    assert result["calib_x"].device.type == result["calib_y"].device.type == "cpu"
+    assert result["calib_x"].dtype == torch.float64
+    assert result["calib_y"].dtype == y.dtype
+    assert result["calib_x"].shape == (len(result["calib_y"]), FEATURES)
+
+
+@pytest.mark.parametrize("device", devices())
 def test_protonet_identity_embedding(device):
     """A Protonet over raw features: emb_out_dim is the input width.
 

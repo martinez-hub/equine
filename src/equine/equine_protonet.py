@@ -618,21 +618,22 @@ class EquineProtonet(Equine):
 
         Returns
         -------
-        tuple[dict[str, Any], torch.Tensor, torch.Tensor]
-            A tuple containing the model summary, the held out calibration
-            data (``calib_x``, moved to the model device and cast to the
-            model's parameter dtype) and the calibration labels (``calib_y``,
-            moved to the model device).
+        dict[str, Any]
+            ``"train_summary"``: the training summary (also kept as
+            ``self.train_summary``); ``"calib_x"`` and ``"calib_y"``: the held
+            out calibration data and labels as split from ``dataset`` (on its
+            device and in its dtypes; the copies moved to the model device are
+            internal).
         """
         self.train()
 
         if self.use_temperature:
+            # No dtype for full(): the value is rounded through the default
+            # dtype and then widened, as ``init_temperature * torch.ones(1)``
+            # did, so trained float64 models keep their numbers.
             self.temperature: torch.Tensor = torch.full(
-                (1,),
-                self.init_temperature,
-                dtype=self.temperature.dtype,
-                device=self.temperature.device,
-            )
+                (1,), self.init_temperature, device=self.temperature.device
+            ).to(self.temperature.dtype)
 
         X, Y = dataset[:]
 
@@ -648,8 +649,9 @@ class EquineProtonet(Equine):
         # on every step when given accelerator tensors (4x slower on MPS).
         # Each episode and the support cross to self.device at the model
         # boundary (Protonet.compute_embeddings / Protonet.update_support).
-        calib_x = _input_to_model(calib_x, self.embedding_model, self.device)
-        calib_y = calib_y.to(self.device)
+        # The caller's split is returned as is; the model gets these copies.
+        model_calib_x = _input_to_model(calib_x, self.embedding_model, self.device)
+        model_calib_y = calib_y.to(self.device)
 
         for i in tqdm(range(num_episodes)):
             optimizer.zero_grad()
@@ -678,14 +680,14 @@ class EquineProtonet(Equine):
             full_support
         )  # update support with final selected examples
 
-        X_embed = self.model.compute_embeddings(calib_x)
-        pred_probs, dists = self.model(calib_x)
+        X_embed = self.model.compute_embeddings(model_calib_x)
+        pred_probs, dists = self.model(model_calib_x)
         ood_dists = self._compute_ood_dist(X_embed, pred_probs, dists)
-        self._fit_outlier_scores(ood_dists, calib_y)
+        self._fit_outlier_scores(ood_dists, model_calib_y)
 
         if self.use_temperature:
             self.calibrate_temperature(
-                calib_x, calib_y, num_calibration_epochs, calibration_lr
+                model_calib_x, model_calib_y, num_calibration_epochs, calibration_lr
             )
 
         date_trained = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
