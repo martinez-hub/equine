@@ -424,6 +424,12 @@ _USE_TEMPERATURE_WARNING = (
     f"rewrite the file without it, {_MIGRATION_HINT}."
 )
 
+_DEVICE_TYPE_DEPRECATION = (
+    "EquineGP.device_type is deprecated and will be removed in the next release: "
+    "read EquineGP.device (a str) instead; to move the model, set "
+    "model.device = value and call model.to(value)."
+)
+
 
 def _expected_laplace_state(settings: dict[str, Any]) -> dict[str, torch.Tensor]:
     """
@@ -554,30 +560,38 @@ class EquineGP(Equine):
     def device_type(self) -> str:
         """Deprecated alias of ``device``; removed in the next release."""
         warnings.warn(
-            "EquineGP.device_type is deprecated; use EquineGP.device (a str)",
+            _DEVICE_TYPE_DEPRECATION,
             DeprecationWarning,
-            stacklevel=2,
+            # Skip the beartype wrapper (a no-op under `python -O`), so the
+            # warning names the caller's line and default filters show it.
+            stacklevel=2 + (0 if sys.flags.optimize else 1),
         )
         return self.device
 
     @device_type.setter
     def device_type(self, value: str) -> None:
         """
-        Deprecated: assigns ``device`` and moves the module there.
+        Deprecated: moves the module to ``value`` and assigns ``device``.
 
         Before 0.1.9 ``device_type`` was a plain attribute read only by
         ``save()``: assigning it changed the device recorded in the file and
         neither where inputs were placed nor where the module lived. Now
         ``device`` decides where inputs go, so the module moves with it to
-        stay consistent (``model.to(value)`` is what a caller should write).
+        stay consistent. To move a model, set ``model.device = value`` and
+        call ``model.to(value)``: either one alone leaves the inputs and the
+        module on different devices.
         """
         warnings.warn(
-            "EquineGP.device_type is deprecated; use EquineGP.device (a str)",
+            _DEVICE_TYPE_DEPRECATION,
             DeprecationWarning,
-            stacklevel=2,
+            # Skip nn.Module.__setattr__ and the beartype wrapper (a no-op
+            # under `python -O`).
+            stacklevel=3 + (0 if sys.flags.optimize else 1),
         )
-        self.device = value
+        # Move first: if the move raises (an unavailable device), ``device``
+        # still names where the module is and the model keeps working.
         self.to(value)
+        self.device = value
 
     def train_model(
         self,

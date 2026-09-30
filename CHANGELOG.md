@@ -16,15 +16,14 @@
   inputs, e.g. embedding indices, keep their dtype. `EquineProtonet.train_model`
   samples its episodes and support on the CPU and moves each batch at that
   boundary. `EquineGP.device`
-  is a `str` like `EquineProtonet.device`; `EquineGP.device_type` is deprecated
-  and removed in the next release. `EquineGP.load` and `load_equine_model`
+  is a `str` like `EquineProtonet.device`; `EquineGP.device_type` is
+  deprecated (see below). `EquineGP.load` and `load_equine_model`
   accept `device=` (positional second argument) like `EquineProtonet.load`;
   an explicit device is checked before the file is read, and `meta`, an
   unavailable device or an index at or above the device count (`cuda:7` on a
   one-GPU machine, `mps:1`) raises `ValueError`; so does loading a file
   whose tensors have a dtype the device lacks (float64 on MPS), naming the
-  dtype. Assigning the deprecated `EquineGP.device_type` moves the module
-  with `device`. For a model on MPS the GP covariance inversion and the
+  dtype. For a model on MPS the GP covariance inversion and the
   entropy in `EquineGP.predict` are computed on the CPU, because torch 2.6 to
   2.9 lack some of those MPS kernels; CPU and CUDA results are unchanged.
   Files saved after training on an
@@ -93,6 +92,11 @@
   saving with `allow_executable=True`, or loading a TorchScript embedding
   under `trust_executable=True`, emits a `FutureWarning`. Migrate flagged
   files with the snippet above (using `trust_executable=True`).
+- `EquineGP.device_type`: read `EquineGP.device` (a `str`) instead. Reading
+  or assigning it emits a `DeprecationWarning`; assigning it moves the module
+  and then sets `device`. To move a model yourself, set `model.device = value`
+  and call `model.to(value)`: either one alone leaves the inputs and the
+  module on different devices.
 
 ### Fixed
 - Opening an untrusted `.eq` file could execute arbitrary code (#168).

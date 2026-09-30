@@ -141,6 +141,7 @@ def test_protonet_save_load_round_trip(device, tmp_path):
     model.save(path)
 
     generic = eq.load_equine_model(path)  # lands on the saved device
+    assert_on_device(generic, device)
     _assert_same_predictions(before, generic.predict(x[:5]))
 
     explicit = eq.EquineProtonet.load(path, device)
@@ -243,7 +244,21 @@ def test_gp_save_load_round_trip(device, tmp_path):
     model.save(path)
 
     generic = eq.load_equine_model(path)  # lands on the saved device
+    # seen_data too: load_checkpoint returns CPU tensors without device=, and
+    # predictions do not show where that buffer landed.
+    assert_on_device(generic, device)
     _assert_same_predictions(before, generic.predict(x[:5]))
+
+
+@pytest.mark.parametrize("device", devices())
+def test_gp_deprecated_device_type_setter_moves_the_module(device):
+    """Assigning the deprecated ``device_type`` moves the module along with ``device``."""
+    model, x, _ = _gp("cpu")
+    with pytest.warns(DeprecationWarning, match="device_type"):
+        model.device_type = device
+    assert model.device == device
+    assert_on_device(model, device)
+    assert_valid_prediction(model.predict(x[:5]), 5, CLASSES)
 
 
 @pytest.mark.parametrize("device", devices())

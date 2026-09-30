@@ -284,11 +284,19 @@ def load_checkpoint(
     warnings.warn(
         _UNSAFE_LOAD_WARNING.format(path=path), UserWarning, stacklevel=_stacklevel
     )
-    checkpoint = torch.load(
-        path,
-        map_location=map_location if map_location is not None else "cpu",
-        weights_only=False,
-    )
+    try:
+        checkpoint = torch.load(
+            path,
+            map_location=map_location if map_location is not None else "cpu",
+            weights_only=False,
+        )
+    except (TypeError, RuntimeError) as err:
+        # As on the safe path, a dtype the device lacks (float64 on MPS) is a
+        # ValueError naming it; any other failure propagates unchanged.
+        refusal = _missing_dtype_refusal(path, map_location)
+        if refusal is None:
+            raise
+        raise refusal from err
     _require_dict(checkpoint, path)
     _validate_format_version(checkpoint)
     _reject_storage_tricks(_unique_tensors(checkpoint))
@@ -297,6 +305,45 @@ def load_checkpoint(
     if _support_is_aliased(checkpoint):
         _unalias_support(checkpoint)
     return checkpoint
+
+
+def _unsupported_dtype_error(
+    dtype: torch.dtype, map_location: Union[str, torch.device]
+) -> ValueError:
+    """The error for a file tensor whose dtype the device lacks (float64 on MPS)."""
+    return ValueError(
+        f"Model file holds a {str(dtype).removeprefix('torch.')} tensor, which "
+        f"{torch.device(map_location).type} does not support; load it with "
+        "device='cpu'"
+    )
+
+
+def _missing_dtype_refusal(
+    path: str, map_location: Optional[str]
+) -> Optional[ValueError]:
+    """
+    The error naming a dtype in the legacy file at ``path`` that ``map_location`` lacks.
+
+    Called only after the legacy ``torch.load`` onto ``map_location`` failed,
+    to tell a missing dtype (float64 on MPS), which torch reports as a
+    TypeError without naming the tensor, from any other failure. The file,
+    which the caller trusts, is read again onto the CPU. None when
+    ``map_location`` is the CPU, when the file fails there too, and when the
+    device holds every dtype in it.
+    """
+    if map_location is None or torch.device(map_location).type == "cpu":
+        return None
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        dtypes = dict.fromkeys(t.dtype for t in _unique_tensors(checkpoint))
+    except Exception:  # the caller re-raises the original error instead
+        return None
+    for dtype in dtypes:
+        try:
+            torch.empty(0, dtype=dtype, device=map_location)
+        except (TypeError, RuntimeError):
+            return _unsupported_dtype_error(dtype, map_location)
+    return None
 
 
 def _validate_format_version(checkpoint: Any) -> None:
@@ -572,11 +619,7 @@ def _copy_off_the_file(
                         0, dtype=tensor.dtype, device=device
                     ).set_(*layout)
                 except (TypeError, RuntimeError) as err:
-                    raise ValueError(
-                        f"Model file holds a {str(tensor.dtype).removeprefix('torch.')} "
-                        f"tensor, which {device.type} does not support; load it with "
-                        "device='cpu'"
-                    ) from err
+                    raise _unsupported_dtype_error(tensor.dtype, device) from err
 
 
 def _jit_archive_to_tensor(buffer: io.BytesIO) -> torch.Tensor:

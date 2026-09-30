@@ -247,8 +247,8 @@ def test_requested_unavailable_device_is_refused(tmp_path, train, cls) -> None:
 
 
 @pytest.mark.parametrize("train, cls", TRAINERS)
-def test_requested_device_index_is_validated(tmp_path, train, cls) -> None:
-    """A device ordinal is checked against this machine's device count up front."""
+def test_requested_cpu_device_index_is_accepted(tmp_path, train, cls) -> None:
+    """``cpu:0`` loads like ``cpu``: the CPU has no device count to check an index against."""
     model, X = train(BasicEmbeddingModel(6, 3))
     path = str(tmp_path / "m.eq")
     model.save(path)
@@ -256,6 +256,28 @@ def test_requested_device_index_is_validated(tmp_path, train, cls) -> None:
         reloaded = loader(path, device="cpu:0")  # index 0 is always the CPU
         assert reloaded.device == "cpu:0"
         assert_same(model, reloaded, X)
+
+
+@pytest.mark.parametrize("train, cls", TRAINERS)
+def test_requested_device_index_is_checked_against_the_device_count(
+    tmp_path, monkeypatch, train, cls
+) -> None:
+    """A device ordinal at or above the device count is refused before the file is read.
+
+    CUDA is faked (available, one device) so that CI, which has no
+    accelerator, reaches the index check; the refusal comes before any CUDA
+    call.
+    """
+    model, _ = train(BasicEmbeddingModel(6, 3))
+    path = str(tmp_path / "m.eq")
+    model.save(path)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    for loader in (cls.load, eq.load_equine_model):
+        with pytest.raises(ValueError, match="names device index 7"):
+            loader(path, device="cuda:7")
+    with pytest.raises(ValueError, match="names device index 7"):
+        equine.utils.load_checkpoint(path, map_location="cuda:7")
 
 
 @pytest.mark.parametrize("train, cls", TRAINERS)

@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 import torch
 from conftest import BasicEmbeddingModel, _rewrite_zip
+from golden_data import trained_gp, trained_protonet
 
 import equine as eq
 import equine.utils
@@ -862,6 +863,94 @@ def test_legacy_path_does_not_restore_the_saved_device(tmp_path) -> None:
     with pytest.warns(UserWarning, match="unsafe"):
         loaded = load_checkpoint(path, allow_unsafe_legacy_format=True)
     assert loaded["a"].device.type == "cpu"
+
+
+@pytest.mark.accelerator
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+@pytest.mark.parametrize(
+    "train, write_legacy",
+    [
+        pytest.param(trained_protonet, _write_legacy_protonet_file, id="protonet"),
+        pytest.param(trained_gp, _write_legacy_gp_file, id="gp"),
+    ],
+)
+def test_float64_legacy_file_is_refused_clearly_on_mps(
+    tmp_path, train, write_legacy
+) -> None:
+    """The legacy path, like the safe one, names a dtype MPS lacks in a ValueError.
+
+    Without it torch's TypeError ("Cannot convert a MPS Tensor to float64")
+    escapes, on the path the migration snippet sends legacy files through.
+    """
+    model = train()  # built and trained in float64 on the CPU
+    path = str(tmp_path / "legacy64.eq")
+    write_legacy(model, path)
+    for loader in (type(model).load, eq.load_equine_model):
+        with pytest.warns(UserWarning, match="unsafe"):
+            with pytest.raises(
+                ValueError,
+                match="float64 tensor, which mps does not support; load it with "
+                "device='cpu'",
+            ):
+                loader(path, device="mps", allow_unsafe_legacy_format=True)
+
+
+@pytest.mark.accelerator
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_legacy_load_onto_mps_reports_only_a_missing_dtype_as_one(
+    tmp_path, monkeypatch
+) -> None:
+    """A pre-1.6 (non-zip) float64 file gets the dtype ValueError; any other failure propagates."""
+    path = str(tmp_path / "old_format.pt")
+    torch.save(
+        {"a": torch.arange(4.0, dtype=torch.float64)},
+        path,
+        _use_new_zipfile_serialization=False,
+    )
+    with pytest.warns(UserWarning, match="unsafe"):
+        with pytest.raises(ValueError, match="float64 tensor, which mps does not"):
+            load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
+
+    torch.save({"a": torch.arange(4.0)}, path, _use_new_zipfile_serialization=False)
+    real_load = torch.load
+
+    def failing_off_the_cpu(*args, **kwargs):
+        if kwargs.get("map_location") != "cpu":
+            raise RuntimeError("out of device memory")
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", failing_off_the_cpu)
+    with pytest.warns(UserWarning, match="unsafe"):
+        with pytest.raises(RuntimeError, match="out of device memory"):
+            load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
+
+    # When the CPU re-read fails too, the error reported is still the device one.
+    def failing_everywhere(*args, **kwargs):
+        raise RuntimeError(f"cannot read onto {kwargs.get('map_location')}")
+
+    monkeypatch.setattr(torch, "load", failing_everywhere)
+    with pytest.warns(UserWarning, match="unsafe"):
+        with pytest.raises(RuntimeError, match="cannot read onto mps"):
+            load_checkpoint(path, map_location="mps", allow_unsafe_legacy_format=True)
+
+
+@pytest.mark.parametrize("map_location", [None, "cpu"])
+def test_legacy_load_failure_on_the_cpu_propagates_unchanged(
+    tmp_path, monkeypatch, map_location
+) -> None:
+    """Only a dtype the device lacks becomes a ValueError; the CPU lacks none."""
+    path = str(tmp_path / "old_format.pt")
+    torch.save({"a": torch.arange(4.0)}, path, _use_new_zipfile_serialization=False)
+
+    def corrupt(*args, **kwargs):
+        raise RuntimeError("corrupt storage")
+
+    monkeypatch.setattr(torch, "load", corrupt)
+    with pytest.warns(UserWarning, match="unsafe"):
+        with pytest.raises(RuntimeError, match="corrupt storage"):
+            load_checkpoint(
+                path, map_location=map_location, allow_unsafe_legacy_format=True
+            )
 
 
 def test_jit_archive_tensor_round_trips() -> None:
