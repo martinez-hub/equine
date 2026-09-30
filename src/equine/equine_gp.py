@@ -257,6 +257,10 @@ class _Laplace(torch.nn.Module):
 
         self.num_data = 0  # to be set later
         self.register_buffer("seen_data", torch.tensor(0))
+        # Python mirror of seen_data for the asserts in the forward pass:
+        # reading the buffer would synchronize with the accelerator on every
+        # forward. Kept beside the buffer (which stays in the state_dict).
+        self._seen_count: int = 0
 
         precision = torch.eye(num_random_features) * self.ridge_penalty
         self.register_buffer("precision", precision)
@@ -272,6 +276,7 @@ class _Laplace(torch.nn.Module):
         identity = torch.eye(self.precision.shape[0], device=self.precision.device)
         self.precision: torch.Tensor = identity * self.ridge_penalty
         self.seen_data: torch.Tensor = torch.tensor(0, device=self.precision.device)
+        self._seen_count = 0
         self.recompute_covariance = True
 
     @icontract.require(lambda num_data: num_data > 0)
@@ -355,12 +360,13 @@ class _Laplace(torch.nn.Module):
             precision_minibatch = k.t() @ k
             self.precision += precision_minibatch
             self.seen_data += x.shape[0]
+            self._seen_count += x.shape[0]
 
-            assert self.seen_data <= self.num_data, (
+            assert self._seen_count <= self.num_data, (
                 "Did not reset precision matrix at start of epoch"
             )
         else:
-            assert self.seen_data > (self.num_data - self.train_batch_size), (
+            assert self._seen_count > (self.num_data - self.train_batch_size), (
                 "Not seen sufficient data for precision matrix"
             )
 
@@ -1127,6 +1133,7 @@ class EquineGP(Equine):
             .get("seen_data")
             .to(eq_model.model.precision.device)
         )
+        eq_model.model._seen_count = int(eq_model.model.seen_data)
 
         eq_model.model.set_training_params(
             model_save.get("num_data"), model_save.get("train_batch_size")

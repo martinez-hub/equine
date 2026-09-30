@@ -181,6 +181,29 @@ def test_gp_update_support(device):
 
 
 @pytest.mark.parametrize("device", devices())
+def test_gp_seen_count_mirrors_the_seen_data_buffer(device, tmp_path):
+    """The asserts in the Laplace forward read a Python int, not the device buffer.
+
+    ``seen_data`` stays a buffer (state_dict and file format unchanged) and
+    ``_seen_count`` follows it through training, a reset and a load, so no
+    forward has to synchronize with the accelerator to read the counter.
+    """
+    model, x, _ = _gp(device)
+    dataset, _, _ = separable_dataset()
+    assert isinstance(model.model._seen_count, int)
+    assert model.model._seen_count == int(model.model.seen_data) == len(dataset)
+
+    path = str(tmp_path / "gp.eq")
+    model.save(path)
+    for loaded in (eq.EquineGP.load(path, device), eq.load_equine_model(path)):
+        assert loaded.model._seen_count == int(loaded.model.seen_data) == len(dataset)
+        assert_valid_prediction(loaded.predict(x[:5]), 5, CLASSES)
+
+    model.model.reset_precision_matrix()
+    assert model.model._seen_count == int(model.model.seen_data) == 0
+
+
+@pytest.mark.parametrize("device", devices())
 def test_gp_vis_support_training(device):
     model, _, _ = _gp(device, vis_support=True, support_size=10)
     assert set(model.support) == set(range(CLASSES))
